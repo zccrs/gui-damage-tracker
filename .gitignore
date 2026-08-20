@@ -1,0 +1,12 @@
+build*/
+.qtcreator/
+CMakeLists.txt.user*
+*.o
+*.a
+*.so
+*.moc
+*.qmlc
+*.jsc
+*.rcc
+*~
+.DS_Store
