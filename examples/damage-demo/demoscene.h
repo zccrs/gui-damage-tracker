@@ -144,6 +144,10 @@ private:
     quint64 m_demoNodeB = 0;
     quint64 m_demoNodeC = 0;
     int m_colorIndex = 0;
+    int m_rotationAxis = 2;
+    qreal m_rotation = 0;
+    qreal m_scaleX = 1;
+    qreal m_scaleY = 1;
     QTimer m_dragFrameTimer;
     QTimer m_demoTimer;
 };

@@ -27,6 +27,7 @@ private slots:
     void damageHistoryColorsOldGreenNewRed();
     void damageHistoryDurationIsConfigurable();
     void refreshRateIsConfigurable();
+    void rotationAxisPersistsAfterCommit();
     void transformInspectorExposesMatrix();
 };
 
@@ -306,6 +307,49 @@ void tst_Demo::refreshRateIsConfigurable()
     QCOMPARE(overlay.refreshRate(), 144);
     overlay.setRefreshRate(0);
     QCOMPARE(overlay.refreshRate(), 1);
+}
+
+void tst_Demo::rotationAxisPersistsAfterCommit()
+{
+    DemoScene scene;
+    scene.loadPreset(QStringLiteral("transform"));
+
+    // Set rotation to X axis with 30 degrees.
+    scene.setRotationSelected(30, 0);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("rotationAxis")).toInt(), 0);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("rotation")).toReal() - 30.0) < 0.1);
+
+    // After a scale change, rotation axis and angle should still be X/30.
+    scene.setScaleSelected(2, 3);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("rotationAxis")).toInt(), 0);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("rotation")).toReal() - 30.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sx")).toReal() - 2.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sy")).toReal() - 3.0) < 0.1);
+
+    // Set to Y axis with 60 degrees — scale should be preserved.
+    scene.setRotationSelected(60, 1);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("rotationAxis")).toInt(), 1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("rotation")).toReal() - 60.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sx")).toReal() - 2.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sy")).toReal() - 3.0) < 0.1);
+
+    // Change rotation angle again — scale should not change.
+    scene.setRotationSelected(45, 1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("rotation")).toReal() - 45.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sx")).toReal() - 2.0) < 0.1);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sy")).toReal() - 3.0) < 0.1);
+
+    // Switch to Z axis.
+    scene.setRotationSelected(90, 2);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("rotationAxis")).toInt(), 2);
+    QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("rotation")).toReal() - 90.0) < 0.1);
+
+    // Visual nodes should include perspective components.
+    scene.loadDemoScene(QStringLiteral("rotation"));
+    const QVariantMap visual = scene.visualNodes().constFirst().toMap();
+    QVERIFY(visual.contains(QStringLiteral("m13")));
+    QVERIFY(visual.contains(QStringLiteral("m23")));
+    QVERIFY(visual.contains(QStringLiteral("m33")));
 }
 void tst_Demo::transformInspectorExposesMatrix()
 {

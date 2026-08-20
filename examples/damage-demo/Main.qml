@@ -788,7 +788,7 @@ ApplicationWindow {
                                         visualItem.modelData.m11, visualItem.modelData.m21, 0, visualItem.modelData.dx,
                                         visualItem.modelData.m12, visualItem.modelData.m22, 0, visualItem.modelData.dy,
                                         0,                        0,                        1, 0,
-                                        0,                        0,                        0, 1
+                                        visualItem.modelData.m13, visualItem.modelData.m23, 0, visualItem.modelData.m33
                                     )
                                 }
 

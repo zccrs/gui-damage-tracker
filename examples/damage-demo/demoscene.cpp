@@ -91,6 +91,35 @@ void DemoScene::setSelectedId(quint64 id)
     if (m_selectedId == id)
         return;
     m_selectedId = id;
+
+    // Decompose transform state from matrix (best effort).
+    if (Node *n = findNode(id)) {
+        if (auto *tr = n->toTransform()) {
+            const QTransform m = tr->matrix();
+            if (!qFuzzyIsNull(m.m13()) || !qFuzzyIsNull(m.m23())) {
+                // Non-affine: perspective transform from X or Y axis rotation.
+                if (!qFuzzyIsNull(m.m23()))
+                    m_rotationAxis = 0;  // X axis: m23 = -sin/d
+                else
+                    m_rotationAxis = 1;  // Y axis: m13 = sin/d
+                m_rotation = 0;
+                m_scaleX = 1;
+                m_scaleY = 1;
+            } else {
+                // Affine (Z axis): standard decomposition.
+                m_rotationAxis = 2;
+                m_rotation = std::atan2(m.m12(), m.m11())
+                    * 180.0 / 3.14159265358979323846;
+                m_scaleX = std::hypot(m.m11(), m.m12());
+                m_scaleY = std::hypot(m.m21(), m.m22());
+            }
+        } else {
+            m_rotationAxis = 2;
+            m_rotation = 0;
+            m_scaleX = 1;
+            m_scaleY = 1;
+        }
+    }
     emit selectedIdChanged();
     rebuildLists();
     refreshSelectedProps();
@@ -363,14 +392,14 @@ void DemoScene::setRotationSelected(qreal degrees, int axis)
     Node *n = findNode(m_selectedId);
     if (!n || !n->toTransform())
         return;
+    m_rotationAxis = axis;
+    m_rotation = degrees;
     const QTransform current = n->toTransform()->matrix();
-    const qreal scaleX = std::hypot(current.m11(), current.m12());
-    const qreal scaleY = std::hypot(current.m21(), current.m22());
     QTransform matrix;
     matrix.translate(current.dx(), current.dy());
     const Qt::Axis a = (axis == 0) ? Qt::XAxis : ((axis == 1) ? Qt::YAxis : Qt::ZAxis);
     matrix.rotate(degrees, a);
-    matrix.scale(scaleX, scaleY);
+    matrix.scale(m_scaleX, m_scaleY);
     n->toTransform()->setMatrix(matrix);
     maybeCommit();
 }
@@ -380,12 +409,13 @@ void DemoScene::setScaleSelected(qreal sx, qreal sy)
     Node *n = findNode(m_selectedId);
     if (!n || !n->toTransform())
         return;
+    m_scaleX = sx;
+    m_scaleY = sy;
     const QTransform current = n->toTransform()->matrix();
-    const qreal rotation = std::atan2(current.m12(), current.m11())
-        * 180.0 / 3.14159265358979323846;
     QTransform matrix;
     matrix.translate(current.dx(), current.dy());
-    matrix.rotate(rotation);
+    const Qt::Axis a = (m_rotationAxis == 0) ? Qt::XAxis : ((m_rotationAxis == 1) ? Qt::YAxis : Qt::ZAxis);
+    matrix.rotate(m_rotation, a);
     matrix.scale(sx, sy);
     n->toTransform()->setMatrix(matrix);
     maybeCommit();
@@ -712,7 +742,8 @@ void DemoScene::advanceDemoFrame()
             if (auto *transform = node->toTransform()) {
                 QTransform matrix;
                 matrix.translate(300, 220);
-                matrix.rotate(triangle * 3.0);
+                const Qt::Axis a = (m_rotationAxis == 0) ? Qt::XAxis : ((m_rotationAxis == 1) ? Qt::YAxis : Qt::ZAxis);
+                matrix.rotate(triangle * 3.0, a);
                 transform->setMatrix(matrix);
             }
         }
@@ -829,6 +860,9 @@ void DemoScene::collectVisualOnly(Node *n, QVariantList *visual, int *paintOrder
         v.insert(QStringLiteral("m12"), matrix.m12());
         v.insert(QStringLiteral("m21"), matrix.m21());
         v.insert(QStringLiteral("m22"), matrix.m22());
+        v.insert(QStringLiteral("m13"), matrix.m13());
+        v.insert(QStringLiteral("m23"), matrix.m23());
+        v.insert(QStringLiteral("m33"), matrix.m33());
         v.insert(QStringLiteral("dx"), matrix.dx());
         v.insert(QStringLiteral("dy"), matrix.dy());
         v.insert(QStringLiteral("x"), aabb.x());
@@ -914,6 +948,9 @@ void DemoScene::collectVisual(Node *n, QVariantList *visual, QVariantList *tree,
         v.insert(QStringLiteral("m12"), matrix.m12());
         v.insert(QStringLiteral("m21"), matrix.m21());
         v.insert(QStringLiteral("m22"), matrix.m22());
+        v.insert(QStringLiteral("m13"), matrix.m13());
+        v.insert(QStringLiteral("m23"), matrix.m23());
+        v.insert(QStringLiteral("m33"), matrix.m33());
         v.insert(QStringLiteral("dx"), matrix.dx());
         v.insert(QStringLiteral("dy"), matrix.dy());
         v.insert(QStringLiteral("x"), aabb.x());
@@ -968,20 +1005,19 @@ void DemoScene::refreshSelectedProps()
     }
     if (auto *tr = n->toTransform()) {
         const QTransform matrix = tr->matrix();
-        const qreal scaleX = std::hypot(matrix.m11(), matrix.m12());
-        const qreal scaleY = std::hypot(matrix.m21(), matrix.m22());
-        const qreal rotation = std::atan2(matrix.m12(), matrix.m11())
-            * 180.0 / 3.14159265358979323846;
         p.insert(QStringLiteral("tx"), matrix.dx());
         p.insert(QStringLiteral("ty"), matrix.dy());
-        p.insert(QStringLiteral("rotation"), rotation);
-        p.insert(QStringLiteral("rotationAxis"), 2);
-        p.insert(QStringLiteral("sx"), scaleX);
-        p.insert(QStringLiteral("sy"), scaleY);
+        p.insert(QStringLiteral("rotation"), m_rotation);
+        p.insert(QStringLiteral("rotationAxis"), m_rotationAxis);
+        p.insert(QStringLiteral("sx"), m_scaleX);
+        p.insert(QStringLiteral("sy"), m_scaleY);
         p.insert(QStringLiteral("m11"), matrix.m11());
         p.insert(QStringLiteral("m12"), matrix.m12());
         p.insert(QStringLiteral("m21"), matrix.m21());
         p.insert(QStringLiteral("m22"), matrix.m22());
+        p.insert(QStringLiteral("m13"), matrix.m13());
+        p.insert(QStringLiteral("m23"), matrix.m23());
+        p.insert(QStringLiteral("m33"), matrix.m33());
         p.insert(QStringLiteral("dx"), matrix.dx());
         p.insert(QStringLiteral("dy"), matrix.dy());
     }
