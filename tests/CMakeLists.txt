@@ -16,3 +16,8 @@ target_include_directories(tst_demo PRIVATE ../examples/damage-demo)
 target_link_libraries(tst_demo PRIVATE gdt Qt6::Test Qt6::Qml Qt6::Quick)
 add_test(NAME tst_demo COMMAND tst_demo)
 set_tests_properties(tst_demo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(bench_gdt bench_gdt.cpp)
+target_link_libraries(bench_gdt PRIVATE gdt Qt6::Test)
+add_test(NAME bench_gdt COMMAND bench_gdt)
+set_tests_properties(bench_gdt PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
