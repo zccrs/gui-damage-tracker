@@ -76,7 +76,15 @@ inline QRegion mapRegionOuter(const QTransform &t, const QRegion &local)
         return {};
     if (t.isIdentity())
         return local;
+    if (t.type() <= QTransform::TxTranslate) {
+        const qreal dx = t.dx();
+        const qreal dy = t.dy();
+        if (std::floor(dx) == dx && std::floor(dy) == dy)
+            return local.translated(int(dx), int(dy));
+    }
     if (!isAxisAligned(t))
+        return QRegion(mapOuter(t, QRectF(local.boundingRect())));
+    if (local.rectCount() == 1)
         return QRegion(mapOuter(t, QRectF(local.boundingRect())));
     QRegion out;
     for (const QRect &r : local)
@@ -94,6 +102,16 @@ inline QRegion mapRegionInner(const QTransform &t, const QRegion &local)
         return {};
     if (t.isIdentity())
         return local;
+    if (t.type() <= QTransform::TxTranslate) {
+        const qreal dx = t.dx();
+        const qreal dy = t.dy();
+        if (std::floor(dx) == dx && std::floor(dy) == dy)
+            return local.translated(int(dx), int(dy));
+    }
+    if (local.rectCount() == 1) {
+        const QRect ir = innerAligned(t.mapRect(QRectF(local.boundingRect())));
+        return ir.isEmpty() ? QRegion() : QRegion(ir);
+    }
     QRegion out;
     for (const QRect &r : local) {
         const QRect ir = innerAligned(t.mapRect(QRectF(r)));
@@ -109,6 +127,8 @@ inline QRegion dilateRegion(const QRegion &r, const QMargins &m)
         return {};
     if (m.isNull())
         return r;
+    if (r.rectCount() == 1)
+        return QRegion(r.boundingRect().marginsAdded(m));
     QRegion out;
     for (const QRect &rect : r)
         out += rect.marginsAdded(m);

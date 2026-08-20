@@ -46,9 +46,10 @@ QRegion Tracker::computeViewport(ViewportState *vp, const QRegion &worldDamage,
     QRegion exposed;
     QRegion screen;
     vp->nodes.clear();
+    if (m_root)
+        vp->nodes.reserve(m_root->subtreeNodeCount());
     m_root->applyOcclusion(frontOpaque, remaining, exposed, screen,
                            vp->worldToOutput, vp->outputRect, &vp->nodes);
-
     if (!vp->outputRect.isEmpty())
         remaining &= vp->outputRect;
     screen += remaining;

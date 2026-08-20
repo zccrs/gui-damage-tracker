@@ -86,7 +86,7 @@ public:
     Node *nextSibling() const { return m_next; }
     Node *previousSibling() const { return m_prev; }
     int childCount() const { return m_childCount; }
-
+    int subtreeNodeCount() const;
     void prependChild(Node *child);
     void appendChild(Node *child);
     void insertChildBefore(Node *child, Node *before);
