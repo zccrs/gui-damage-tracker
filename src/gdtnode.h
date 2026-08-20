@@ -86,7 +86,7 @@ public:
     Node *nextSibling() const { return m_next; }
     Node *previousSibling() const { return m_prev; }
     int childCount() const { return m_childCount; }
-    int subtreeNodeCount() const;
+    int subtreeNodeCount() const { return m_subtreeNodeCount; }
     void prependChild(Node *child);
     void appendChild(Node *child);
     void insertChildBefore(Node *child, Node *before);
@@ -143,6 +143,7 @@ private:
     Node *m_prev = nullptr;
     Node *m_next = nullptr;
     int m_childCount = 0;
+    int m_subtreeNodeCount = 1;
 
     bool m_visible = true;
     DirtyBits m_dirty = DirtyAdded;

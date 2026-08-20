@@ -37,7 +37,8 @@ QRegion Tracker::computeViewport(ViewportState *vp, const QRegion &worldDamage,
         && (!worldDamage.isEmpty() || !extra.isEmpty())) {
         remaining = QRegion(vp->outputRect);
     } else {
-        remaining = mapRegionOuter(vp->worldToOutput, worldDamage) + extra;
+        remaining = mapRegionOuter(vp->worldToOutput, worldDamage);
+        remaining += extra;
     }
     if (!vp->outputRect.isEmpty())
         remaining &= vp->outputRect;
@@ -110,8 +111,8 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
                 damage = QRegion(in.outputRect);
             } else {
                 const QRegion bounds(m_root->subtreeBounds());
-                damage = mapRegionOuter(it->worldToOutput, bounds)
-                    + mapRegionOuter(in.worldToOutput, bounds);
+                damage = mapRegionOuter(it->worldToOutput, bounds);
+                damage += mapRegionOuter(in.worldToOutput, bounds);
             }
             if (!damage.isEmpty()) {
                 extra.insert(in.id, damage);

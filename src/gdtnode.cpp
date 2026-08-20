@@ -81,13 +81,6 @@ void Node::setVisible(bool visible)
     markDirty(DirtyVisibility);
 }
 
-int Node::subtreeNodeCount() const
-{
-    int count = 1;
-    for (Node *child = m_firstChild; child; child = child->m_next)
-        count += child->subtreeNodeCount();
-    return count;
-}
 
 void Node::markDirty(DirtyBits bits)
 {
@@ -120,6 +113,8 @@ void Node::attach(Node *child, Node *prev, Node *next)
     else
         m_lastChild = child;
     ++m_childCount;
+    for (Node *p = this; p; p = p->m_parent)
+        p->m_subtreeNodeCount += child->m_subtreeNodeCount;
     child->markDirty(DirtyAdded);
     markDirty(DirtyStructure);
 }
@@ -138,6 +133,8 @@ void Node::unlink(Node *child)
     child->m_prev = nullptr;
     child->m_next = nullptr;
     --m_childCount;
+    for (Node *p = this; p; p = p->m_parent)
+        p->m_subtreeNodeCount -= child->m_subtreeNodeCount;
 }
 
 void Node::prependChild(Node *child)
@@ -266,7 +263,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
             }
             if (m_dirty & DirtyContent) {
                 QRegion mapped = mapRegionOuter(m_worldTransform, geo->m_pendingContentDamage);
-                mapped &= QRegion(m_worldBounds);
+                mapped &= m_worldBounds;
                 m_ownDamage += mapped;
             }
         }
@@ -295,13 +292,12 @@ void Node::collectBackdrop(QRegion &acc)
         const QRect sample = m_worldBounds.marginsAdded(bg->m_expansion);
         QRegion relevant = acc;
         relevant &= sample;
-        QRegion induced = dilateRegion(relevant, bg->m_expansion);
+        m_inducedDamage = dilateRegion(relevant, bg->m_expansion);
         if (bg->m_clipExpansion)
-            induced &= m_worldBounds;
+            m_inducedDamage &= m_worldBounds;
         else
-            induced &= m_worldBounds.marginsAdded(bg->m_expansion);
-        m_inducedDamage = induced;
-        acc += induced;
+            m_inducedDamage &= m_worldBounds.marginsAdded(bg->m_expansion);
+        acc += m_inducedDamage;
     }
 
     acc += m_ownDamage;
@@ -319,7 +315,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             NodeViewportView view;
             view.culled = true;
             if (out)
-                (*out)[m_id] = view;
+                (*out)[m_id] = std::move(view);
             else {
                 m_visibleDamage = {};
                 m_occludedRegion = {};
@@ -330,15 +326,33 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         return;
     }
 
+    // Subtree AABB culling: skip entire off-screen subtrees.
+    if (!outputRect.isEmpty() && !m_subtreeAABB.isEmpty()) {
+        const QRect outputSubtreeAABB = mapOuter(worldToOutput, QRectF(m_subtreeAABB));
+        if (!outputSubtreeAABB.intersects(outputRect))
+            return;
+    }
+
     for (Node *child = m_lastChild; child; child = child->m_prev) {
         child->applyOcclusion(frontOpaque, remaining, exposed, screen,
                               worldToOutput, outputRect, out);
     }
 
     const bool usableTransform = worldToOutput.isAffine() && worldToOutput.isInvertible();
-    const QRegion worldLocalDamage = m_ownDamage + m_inducedDamage;
+    const bool hasDamage = !m_ownDamage.isEmpty() || !m_inducedDamage.isEmpty();
+
+    // Map damage to output coordinates. When only one source is non-empty,
+    // map it directly — avoids a QRegion::united() allocation.
     QRegion localDamage;
-    if (!worldLocalDamage.isEmpty()) {
+    if (hasDamage) {
+        QRegion worldLocalDamage;
+        if (m_inducedDamage.isEmpty())
+            worldLocalDamage = m_ownDamage;       // COW copy, no alloc
+        else if (m_ownDamage.isEmpty())
+            worldLocalDamage = m_inducedDamage;   // COW copy, no alloc
+        else
+            worldLocalDamage = m_ownDamage + m_inducedDamage;
+
         if (usableTransform) {
             localDamage = mapRegionOuter(worldToOutput, worldLocalDamage);
         } else if (!outputRect.isEmpty()) {
@@ -353,6 +367,48 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     if (!isDisplayable()) {
         if (!localDamage.isEmpty())
             screen += localDamage;
+        return;
+    }
+
+    // Fast path: damage-free, non-opaque, non-exposed displayable node.
+    // No contribution to screen/remaining/exposed/frontOpaque — only need
+    // culled/fullyOccluded/occludedRegion for the view. Uses QRect when the
+    // front-opaque AABB doesn't intersect (avoids QRegion heap ops).
+    if (!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty()) {
+        QRect boundsRect;
+        if (usableTransform)
+            boundsRect = mapOuter(worldToOutput, QRectF(m_worldBounds));
+        else if (!outputRect.isEmpty())
+            boundsRect = outputRect;
+        else
+            boundsRect = mapOuter(worldToOutput, QRectF(m_worldBounds));
+        if (!outputRect.isEmpty())
+            boundsRect &= outputRect;
+
+        NodeViewportView view;
+        if (boundsRect.isEmpty()) {
+            view.culled = true;
+        } else if (!frontOpaque.isEmpty()) {
+            // Check full occlusion with QRect API — avoids QRegion subtraction.
+            if (frontOpaque.contains(boundsRect)) {
+                view.fullyOccluded = true;
+                view.culled = true;
+                view.occludedRegion = QRegion(boundsRect);
+            } else {
+                const QRect frontAABB = frontOpaque.boundingRect();
+                if (frontAABB.intersects(boundsRect))
+                    view.occludedRegion = frontOpaque & boundsRect;
+            }
+        }
+
+        if (out) {
+            (*out)[m_id] = std::move(view);
+        } else {
+            m_visibleDamage = {};
+            m_occludedRegion = std::move(view.occludedRegion);
+            m_fullyOccluded = view.fullyOccluded;
+            m_culled = view.culled;
+        }
         return;
     }
 
@@ -407,11 +463,15 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         }
     }
 
+    // Compute visibleDamage: split A + B into A; A += B to save one temporary.
     if (exposed.isEmpty()) {
-        view.visibleDamage = visibleLocalDamage.isEmpty() ? QRegion() : (visibleLocalDamage & boundsReg);
+        if (!visibleLocalDamage.isEmpty())
+            view.visibleDamage = visibleLocalDamage & boundsReg;
     } else {
-        view.visibleDamage = (exposed & nonOccludedBounds)
-            + (visibleLocalDamage.isEmpty() ? QRegion() : (visibleLocalDamage & boundsReg));
+        if (!exposed.isEmpty() && !nonOccludedBounds.isEmpty())
+            view.visibleDamage = exposed & nonOccludedBounds;
+        if (!visibleLocalDamage.isEmpty())
+            view.visibleDamage += visibleLocalDamage & boundsReg;
     }
 
     if (!visibleLocalDamage.isEmpty())
@@ -422,8 +482,15 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             remaining -= opaque;
         if (!exposed.isEmpty())
             exposed -= opaque;
-        if (!visibleLocalDamage.isEmpty())
-            exposed += visibleLocalDamage - opaque;
+        if (!visibleLocalDamage.isEmpty()) {
+            // Short-circuit: if AABBs don't intersect, subtraction is a no-op.
+            const QRect opaqueAABB = opaque.boundingRect();
+            const QRect damageAABB = visibleLocalDamage.boundingRect();
+            if (opaqueAABB.intersects(damageAABB))
+                exposed += visibleLocalDamage - opaque;
+            else
+                exposed += visibleLocalDamage;
+        }
         frontOpaque += opaque;
     } else {
         if (!visibleLocalDamage.isEmpty())
@@ -431,10 +498,10 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     }
 
     if (out) {
-        (*out)[m_id] = view;
+        (*out)[m_id] = std::move(view);
     } else {
-        m_visibleDamage = view.visibleDamage;
-        m_occludedRegion = view.occludedRegion;
+        m_visibleDamage = std::move(view.visibleDamage);
+        m_occludedRegion = std::move(view.occludedRegion);
         m_fullyOccluded = view.fullyOccluded;
         m_culled = view.culled;
     }
