@@ -11,6 +11,8 @@ add_executable(tst_demo
     ../examples/damage-demo/demoscene.h
     ../examples/damage-demo/damageoverlay.cpp
     ../examples/damage-demo/damageoverlay.h
+    ../examples/damage-demo/visualnodemodel.cpp
+    ../examples/damage-demo/visualnodemodel.h
 )
 target_include_directories(tst_demo PRIVATE ../examples/damage-demo)
 target_link_libraries(tst_demo PRIVATE gdt Qt6::Test Qt6::Qml Qt6::Quick)

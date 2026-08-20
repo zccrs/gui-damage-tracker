@@ -15,6 +15,8 @@ qt_add_qml_module(damage-demo
         demoscene.cpp
         damageoverlay.h
         damageoverlay.cpp
+        visualnodemodel.h
+        visualnodemodel.cpp
 )
 
 target_link_libraries(damage-demo PRIVATE

@@ -778,35 +778,36 @@ ApplicationWindow {
                             model: scene.visualNodes
                             delegate: Item {
                                 id: visualItem
-                                required property var modelData
+                                
+                                
                                 width: 0
                                 height: 0
-                                visible: modelData.visible
+                                visible: model.visible
 
                                 transform: Matrix4x4 {
                                     matrix: Qt.matrix4x4(
-                                        visualItem.modelData.m11, visualItem.modelData.m21, 0, visualItem.modelData.dx,
-                                        visualItem.modelData.m12, visualItem.modelData.m22, 0, visualItem.modelData.dy,
+                                        model.m11, model.m21, 0, model.dx,
+                                        model.m12, model.m22, 0, model.dy,
                                         0,                        0,                        1, 0,
-                                        visualItem.modelData.m13, visualItem.modelData.m23, 0, visualItem.modelData.m33
+                                        model.m13, model.m23, 0, model.m33
                                     )
                                 }
 
                                 Rectangle {
                                     id: nodeRect
-                                    property color baseColor: visualItem.modelData.color
-                                    property real fillAlpha: visualItem.modelData.fullyOpaque
+                                    property color baseColor: model.color
+                                    property real fillAlpha: model.fullyOpaque
                                                              ? 1.0
-                                                             : (visualItem.modelData.isBackdrop ? 0.46 : 0.58)
-                                    x: visualItem.modelData.localX
-                                    y: visualItem.modelData.localY
-                                    width: visualItem.modelData.localWidth
-                                    height: visualItem.modelData.localHeight
+                                                             : (model.isBackdrop ? 0.46 : 0.58)
+                                    x: model.localX
+                                    y: model.localY
+                                    width: model.localWidth
+                                    height: model.localHeight
                                     color: "transparent"
-                                    radius: visualItem.modelData.isBackdrop ? 12 : 7
-                                    border.color: visualItem.modelData.id === scene.selectedId
+                                    radius: model.isBackdrop ? 12 : 7
+                                    border.color: model.id === scene.selectedId
                                                   ? "#ffffff" : Qt.alpha(Qt.lighter(baseColor, 1.35), 0.95)
-                                    border.width: visualItem.modelData.id === scene.selectedId ? 2 : 1
+                                    border.width: model.id === scene.selectedId ? 2 : 1
                                     gradient: Gradient {
                                         GradientStop {
                                             position: 0
@@ -834,8 +835,8 @@ ApplicationWindow {
                                         anchors.left: parent.left
                                         anchors.top: parent.top
                                         anchors.margins: 8
-                                        text: visualItem.modelData.name
-                                            + (visualItem.modelData.occluded ? "  ·  已遮挡" : (visualItem.modelData.culled ? "  ·  已剔除" : ""))
+                                        text: model.name
+                                            + (model.occluded ? "  ·  已遮挡" : (model.culled ? "  ·  已剔除" : ""))
                                         color: "#ffffff"
                                         font.pixelSize: 11
                                         font.weight: Font.DemiBold
@@ -852,14 +853,14 @@ ApplicationWindow {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         onPressed: function(mouse) {
                                             if (mouse.button === Qt.LeftButton) {
-                                                scene.activateNode(visualItem.modelData.id)
+                                                scene.activateNode(model.id)
                                                 isDragging = true
                                                 interactionStarted = false
                                                 var p = mapToItem(canvas, mouse.x, mouse.y)
                                                 lastCanvasX = p.x
                                                 lastCanvasY = p.y
                                             } else {
-                                                scene.selectedId = visualItem.modelData.id
+                                                scene.selectedId = model.id
                                                 nodeMenu.popup(nodeRect, mouse.x, mouse.y)
                                             }
                                         }

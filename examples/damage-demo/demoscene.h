@@ -2,6 +2,8 @@
 #define DEMOSCENE_H
 
 #include "gdt.h"
+#include "visualnodemodel.h"
+
 
 #include <QColor>
 #include <QHash>
@@ -19,7 +21,7 @@ class DemoScene : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
-    Q_PROPERTY(QVariantList visualNodes READ visualNodes NOTIFY visualNodesChanged)
+    Q_PROPERTY(VisualNodeModel* visualNodes READ visualNodesModel CONSTANT)
     Q_PROPERTY(QVariantList treeNodes READ treeNodes NOTIFY treeNodesChanged)
     Q_PROPERTY(QVariantList damageRects READ damageRects NOTIFY damageChanged)
     Q_PROPERTY(QVariantList damageRectsB READ damageRectsB NOTIFY damageChanged)
@@ -38,7 +40,7 @@ public:
     explicit DemoScene(QObject *parent = nullptr);
     ~DemoScene() override;
 
-    QVariantList visualNodes() const { return m_visualNodes; }
+    VisualNodeModel *visualNodesModel() const { return m_visualNodeModel; }
     QVariantList treeNodes() const { return m_treeNodes; }
     QVariantList damageRects() const { return m_damageRects; }
     QVariantList damageRectsB() const { return m_damageRectsB; }
@@ -89,7 +91,6 @@ public:
 
 signals:
     void sceneChanged();
-    void visualNodesChanged();
     void treeNodesChanged();
     void damageChanged();
     void selectedIdChanged();
@@ -110,8 +111,8 @@ private:
     QColor nextColor();
     void rebuildLists();
     void rebuildVisualNodes();
-    void collectVisualOnly(Gdt::Node *n, QVariantList *visual, int *paintOrder);
-    void collectVisual(Gdt::Node *n, QVariantList *visual, QVariantList *tree,
+    void collectVisualOnly(Gdt::Node *n, QVector<QVariantMap> *visual, int *paintOrder);
+    void collectVisual(Gdt::Node *n, QVector<QVariantMap> *visual, QVariantList *tree,
                        int depth, int *paintOrder);
     void refreshSelectedProps();
     void maybeCommit();
@@ -125,7 +126,7 @@ private:
     Gdt::Tracker m_tracker;
     QHash<quint64, Decor> m_decor;
     QHash<quint64, QString> m_displayNames;
-    QVariantList m_visualNodes;
+    VisualNodeModel *m_visualNodeModel = nullptr;
     QVariantList m_treeNodes;
     QVariantList m_damageRects;
     QVariantList m_damageRectsB;

@@ -52,6 +52,7 @@ static QVariantList regionToRects(const QRegion &region)
 
 DemoScene::DemoScene(QObject *parent)
     : QObject(parent)
+    , m_visualNodeModel(new VisualNodeModel(this))
 {
     m_dragFrameTimer.setInterval(refreshInterval(m_refreshRate));
     connect(&m_dragFrameTimer, &QTimer::timeout, this, [this] {
@@ -818,29 +819,27 @@ void DemoScene::maybeCommit()
 
 void DemoScene::rebuildLists()
 {
-    QVariantList visual;
+    QVector<QVariantMap> visual;
     QVariantList tree;
     int paintOrder = 0;
     m_displayNames.clear();
     collectVisual(m_root.get(), &visual, &tree, 0, &paintOrder);
-    m_visualNodes = visual;
+    m_visualNodeModel->setNodes(visual);
     m_treeNodes = tree;
-    emit visualNodesChanged();
     emit treeNodesChanged();
     emit sceneChanged();
 }
 
 void DemoScene::rebuildVisualNodes()
 {
-    QVariantList visual;
+    QVector<QVariantMap> visual;
     int paintOrder = 0;
     collectVisualOnly(m_root.get(), &visual, &paintOrder);
-    m_visualNodes = visual;
-    emit visualNodesChanged();
+    m_visualNodeModel->setNodes(visual);
     emit sceneChanged();
 }
 
-void DemoScene::collectVisualOnly(Node *n, QVariantList *visual, int *paintOrder)
+void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *paintOrder)
 {
     if (n->isDisplayable()) {
         auto *geo = n->toGeometry();
@@ -882,7 +881,7 @@ void DemoScene::collectVisualOnly(Node *n, QVariantList *visual, int *paintOrder
         collectVisualOnly(c, visual, paintOrder);
 }
 
-void DemoScene::collectVisual(Node *n, QVariantList *visual, QVariantList *tree,
+void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantList *tree,
                               int depth, int *paintOrder)
 {
     const int order = (*paintOrder)++;

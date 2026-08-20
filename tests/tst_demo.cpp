@@ -183,11 +183,11 @@ void tst_Demo::dragUpdatesCoordinatesInRealTime()
 
     QCOMPARE(scene.selectedProps().value(QStringLiteral("x")).toReal(), 85.0);
     QCOMPARE(scene.selectedProps().value(QStringLiteral("y")).toReal(), 87.0);
-    QCOMPARE(scene.visualNodes().at(0).toMap().value(QStringLiteral("x")).toReal(), 85.0);
-    QCOMPARE(scene.visualNodes().at(0).toMap().value(QStringLiteral("y")).toReal(), 87.0);
+    QCOMPARE(scene.visualNodesModel()->getRow(0).value(QStringLiteral("x")).toReal(), 85.0);
+    QCOMPARE(scene.visualNodesModel()->getRow(0).value(QStringLiteral("y")).toReal(), 87.0);
     scene.finishSelectedMove();
-    QCOMPARE(scene.visualNodes().at(0).toMap().value(QStringLiteral("x")).toReal(), 85.0);
-    QCOMPARE(scene.visualNodes().at(0).toMap().value(QStringLiteral("y")).toReal(), 87.0);
+    QCOMPARE(scene.visualNodesModel()->getRow(0).value(QStringLiteral("x")).toReal(), 85.0);
+    QCOMPARE(scene.visualNodesModel()->getRow(0).value(QStringLiteral("y")).toReal(), 87.0);
 }
 
 void tst_Demo::refreshRateThrottlesDragFrames()
@@ -346,7 +346,7 @@ void tst_Demo::rotationAxisPersistsAfterCommit()
 
     // Visual nodes should include perspective components.
     scene.loadDemoScene(QStringLiteral("rotation"));
-    const QVariantMap visual = scene.visualNodes().constFirst().toMap();
+    const QVariantMap visual = scene.visualNodesModel()->getRow(0);
     QVERIFY(visual.contains(QStringLiteral("m13")));
     QVERIFY(visual.contains(QStringLiteral("m23")));
     QVERIFY(visual.contains(QStringLiteral("m33")));
@@ -373,7 +373,7 @@ void tst_Demo::transformInspectorExposesMatrix()
     QVERIFY(!scene.damageFrames().isEmpty());
 
     scene.loadDemoScene(QStringLiteral("rotation"));
-    const QVariantMap rotatedVisual = scene.visualNodes().constFirst().toMap();
+    const QVariantMap rotatedVisual = scene.visualNodesModel()->getRow(0);
     QVERIFY(rotatedVisual.contains(QStringLiteral("localWidth")));
     QVERIFY(rotatedVisual.contains(QStringLiteral("m11")));
     QVERIFY(rotatedVisual.contains(QStringLiteral("m22")));
