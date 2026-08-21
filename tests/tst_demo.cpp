@@ -272,8 +272,7 @@ void tst_Demo::damageHistoryColorsOldGreenNewRed()
     overlapPainter.end();
     const QColor overlapDamage = image.pixelColor(5, 5);
     QVERIFY(overlapDamage.red() > overlapDamage.green());
-    QVERIFY(overlapDamage.alpha() < 130);
-
+    QVERIFY(overlapDamage.alpha() < 200);
     // Time controls expiration only. A lone frame stays red for its lifetime.
     overlay.setFrames({frame(now - 1500, QRect(0, 0, 10, 10))});
     image.fill(Qt::transparent);

@@ -22,6 +22,7 @@
 - 🎯 **多 Viewport 矩阵映射与独立计算**：
   - 单次遍历统一提取世界坐标损伤，针对每个 Viewport 的 `worldToOutput` 矩阵（支持缩放、旋转、偏移）进行精准映射。
   - 每个 Viewport 拥有独立的有效损伤区域（`visibleDamage`）与遮挡判定。
+  - **Swapchain / Buffer Age 原生支持**：`Viewport` 结构体支持携带自身由于双缓冲/三缓冲切换产生的额外 Buffer Damage（`vp.damage`），与场景图计算出的 Damage 完美求并融合。
 - ⚡ **遮挡剔除与跳过绘制 (Occlusion Culling)**：
   - 从前向后（Top-to-Bottom）动态累积不透明区域（`opaqueRegion`）。
   - 被完全遮挡的节点自动标记 `isCulled(vpId) == true`，在渲染遍历时直接跳过，显著降低 GPU 渲染带宽与 Draw Call。
@@ -123,6 +124,20 @@ qDebug() << "Viewport 1 Damage:" << damageVp1;
 if (!card->isCulled(1)) {
     // 执行渲染绘制...
 }
+```
+
+### Swapchain / Buffer Age 多缓冲支持示例
+
+```cpp
+// 在双缓冲或三缓冲图形管线中，当前渲染目标 Buffer 可能需要补全历史帧遗漏的区域 (Buffer Damage)
+Tracker::Viewport vp;
+vp.id = 1;
+vp.outputRect = QRect(0, 0, 1920, 1080);
+vp.damage = getSwapchainBufferAgeDamage(); // 传入当前输出 Buffer 自身的历史 Damage
+
+auto result = tracker.commit({vp});
+// 返回的 Damage 自动融合了场景图计算出的增量 Damage 与该 Buffer 需补偿的 Swapchain Damage
+QRegion finalBufferDamage = result.value(1);
 ```
 
 ### RendererNode 自定义渲染节点示例

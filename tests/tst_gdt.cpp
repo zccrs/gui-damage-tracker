@@ -114,6 +114,9 @@ private slots:
     void rendererNodeBasicDamageFunction();
     void rendererNodeDynamicInducedDamage();
     void rendererNodeMatrixPropagation();
+    void viewportCarryOwnDamageOnIdleTree();
+    void viewportDamageUnionsWithTreeDamage();
+    void multipleViewportsIndependentBufferDamage();
 };
 
 void tst_Gdt::emptyCommit()
@@ -1474,5 +1477,82 @@ void tst_Gdt::rendererNodeMatrixPropagation()
     QCOMPARE(capturedWorldTransform.m22(), 2.0);
 }
 
+void tst_Gdt::viewportCarryOwnDamageOnIdleTree()
+{
+    Node root;
+    auto *g = new GeometryNode;
+    g->setBoundingRect(QRectF(10, 10, 100, 100));
+    root.appendChild(g);
+
+    Tracker tracker(&root);
+    tracker.commit(); // initial commit
+
+    // Idle tree (no changes), but viewport has swapchain/buffer damage (e.g. from buffer age)
+    Tracker::Viewport vp;
+    vp.id = 0;
+    vp.outputRect = QRect(0, 0, 500, 500);
+    vp.damage = QRegion(50, 50, 40, 40);
+
+    const auto result = tracker.commit({vp});
+    COMPARE_REGION(result.value(0), QRegion(50, 50, 40, 40));
+    COMPARE_REGION(tracker.damage(0), QRegion(50, 50, 40, 40));
+}
+
+void tst_Gdt::viewportDamageUnionsWithTreeDamage()
+{
+    Node root;
+    auto *g = new GeometryNode;
+    g->setBoundingRect(QRectF(0, 0, 200, 200));
+    root.appendChild(g);
+
+    Tracker tracker(&root);
+    tracker.commit();
+
+    // Tree has content damage in (10, 10, 30, 30), and viewport carries buffer damage in (100, 100, 50, 50)
+    g->markContentDirty(QRect(10, 10, 30, 30));
+
+    Tracker::Viewport vp;
+    vp.id = 0;
+    vp.outputRect = QRect(0, 0, 400, 400);
+    vp.damage = QRegion(100, 100, 50, 50);
+
+    const auto result = tracker.commit({vp});
+    const QRegion expected = QRegion(10, 10, 30, 30) + QRegion(100, 100, 50, 50);
+    COMPARE_REGION(result.value(0), expected);
+}
+
+void tst_Gdt::multipleViewportsIndependentBufferDamage()
+{
+    Node root;
+    auto *g = new GeometryNode;
+    g->setBoundingRect(QRectF(0, 0, 400, 400));
+    root.appendChild(g);
+    Tracker tracker(&root);
+
+    Tracker::Viewport initVp0;
+    initVp0.id = 0;
+    initVp0.outputRect = QRect(0, 0, 800, 600);
+
+    Tracker::Viewport initVp1;
+    initVp1.id = 1;
+    initVp1.outputRect = QRect(0, 0, 800, 600);
+
+    tracker.commit({initVp0, initVp1}); // initial commit registers both viewports
+
+    // Next frame: dual monitor outputs with independent swapchain buffer damage
+    Tracker::Viewport vp0;
+    vp0.id = 0;
+    vp0.outputRect = QRect(0, 0, 800, 600);
+    vp0.damage = QRegion(20, 20, 30, 30);
+
+    Tracker::Viewport vp1;
+    vp1.id = 1;
+    vp1.outputRect = QRect(0, 0, 800, 600);
+    vp1.damage = QRegion(60, 60, 40, 40);
+
+    const auto result = tracker.commit({vp0, vp1});
+    COMPARE_REGION(result.value(0), QRegion(20, 20, 30, 30));
+    COMPARE_REGION(result.value(1), QRegion(60, 60, 40, 40));
+}
 QTEST_MAIN(tst_Gdt)
 #include "tst_gdt.moc"

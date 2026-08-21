@@ -780,6 +780,32 @@ ApplicationWindow {
                             onHeightChanged: requestPaint()
                         }
 
+                        // 视口 A 底层背景与点击选中区域 (位于图元下方)
+                        Rectangle {
+                            x: scene.viewportA.x; y: scene.viewportA.y
+                            width: scene.viewportA.width; height: scene.viewportA.height
+                            color: (scene.selectionType === 2 && scene.selectedViewportId === 0) ? "#147399ff" : "#04ffffff"
+                            border.color: (scene.selectionType === 2 && scene.selectedViewportId === 0) ? "#7399ff" : "#78526079"
+                            border.width: (scene.selectionType === 2 && scene.selectedViewportId === 0) ? 2.5 : 1.5
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: scene.selectViewport(0)
+                            }
+                        }
+
+                        // 视口 B 底层背景与点击选中区域 (位于图元下方)
+                        Rectangle {
+                            x: scene.viewportB.x; y: scene.viewportB.y
+                            width: scene.viewportB.width; height: scene.viewportB.height
+                            color: (scene.selectionType === 2 && scene.selectedViewportId === 1) ? "#147399ff" : "#04ffffff"
+                            border.color: (scene.selectionType === 2 && scene.selectedViewportId === 1) ? "#7399ff" : "#78526079"
+                            border.width: (scene.selectionType === 2 && scene.selectedViewportId === 1) ? 2.5 : 1.5
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: scene.selectViewport(1)
+                            }
+                        }
+
                         Repeater {
                             model: scene.visualNodes
                             delegate: Item {
@@ -910,22 +936,36 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            x: scene.viewportA.x; y: scene.viewportA.y
-                            width: scene.viewportA.width; height: scene.viewportA.height
-                            color: "transparent"; border.color: "#78526079"; border.width: 2
+                            x: scene.viewportA.x + 8; y: scene.viewportA.y + 6
+                            width: labelVpA.implicitWidth + 12; height: 22; radius: 4
+                            color: (scene.selectionType === 2 && scene.selectedViewportId === 0) ? "#3355aa" : "#203048"
+                            Label {
+                                id: labelVpA
+                                anchors.centerIn: parent
+                                text: "输出 A (Primary)"
+                                color: (scene.selectionType === 2 && scene.selectedViewportId === 0) ? "#ffffff" : win.mutedColor
+                                font.pixelSize: 9; font.weight: Font.DemiBold
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: scene.selectViewport(0)
+                            }
                         }
                         Rectangle {
-                            x: scene.viewportB.x; y: scene.viewportB.y
-                            width: scene.viewportB.width; height: scene.viewportB.height
-                            color: "transparent"; border.color: "#78526079"; border.width: 2
-                        }
-                        Label {
-                            x: scene.viewportA.x + 10; y: scene.viewportA.y + 8
-                            text: "输出 A"; color: win.mutedColor; font.pixelSize: 9; font.weight: Font.DemiBold
-                        }
-                        Label {
-                            x: scene.viewportB.x + 10; y: scene.viewportB.y + 8
-                            text: "输出 B"; color: win.mutedColor; font.pixelSize: 9; font.weight: Font.DemiBold
+                            x: scene.viewportB.x + 8; y: scene.viewportB.y + 6
+                            width: labelVpB.implicitWidth + 12; height: 22; radius: 4
+                            color: (scene.selectionType === 2 && scene.selectedViewportId === 1) ? "#3355aa" : "#203048"
+                            Label {
+                                id: labelVpB
+                                anchors.centerIn: parent
+                                text: "输出 B (Secondary)"
+                                color: (scene.selectionType === 2 && scene.selectedViewportId === 1) ? "#ffffff" : win.mutedColor
+                                font.pixelSize: 9; font.weight: Font.DemiBold
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: scene.selectViewport(1)
+                            }
                         }
 
                         DamageOverlay {
@@ -1032,12 +1072,15 @@ ApplicationWindow {
                         anchors.margins: 10
                         Rectangle {
                             width: 34; height: 34; radius: 9
-                            color: win.sel.type === "Geometry" ? "#596de8"
+                            color: scene.selectionType === 2 ? "#0284c7"
+                                 : win.sel.type === "Geometry" ? "#596de8"
                                  : win.sel.type === "Backdrop" ? "#0891b2"
+                                 : win.sel.type === "Renderer" ? "#ff7043"
                                  : win.sel.type === "Transform" ? "#d28a2d" : "#556176"
                             Label {
                                 anchors.centerIn: parent
-                                text: win.sel.type ? win.sel.type.charAt(0) : "–"
+                                text: scene.selectionType === 2 ? "V"
+                                    : win.sel.type ? win.sel.type.charAt(0) : "–"
                                 color: "#ffffff"
                                 font.bold: true
                             }
@@ -1046,7 +1089,8 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             spacing: 0
                             Label {
-                                text: win.sel.name || "未选择节点"
+                                text: scene.selectionType === 2 ? (scene.selectedViewportProps.name || "视口")
+                                    : (win.sel.name || "未选择对象")
                                 color: win.textColor
                                 font.pixelSize: 14
                                 font.weight: Font.DemiBold
@@ -1054,24 +1098,168 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
                             Label {
-                                text: win.sel.type ? (win.typeLabel(win.sel.type) + "  ·  ID " + win.sel.id)
-                                                   : "在节点树或画布中选择节点"
+                                text: scene.selectionType === 2 ? ("输出视口  ·  ID " + scene.selectedViewportProps.id)
+                                    : win.sel.type ? (win.typeLabel(win.sel.type) + "  ·  ID " + win.sel.id)
+                                                   : "在节点树或画布中选择节点/视口"
                                 color: win.mutedColor
                                 font.pixelSize: 10
                             }
                         }
                     }
                 }
-
                 ScrollView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
                     contentWidth: availableWidth
 
+                    // Viewport 属性编辑器 (当选中 Viewport 时展示)
                     ColumnLayout {
                         width: parent.width
-                        visible: !!win.sel.id
+                        visible: scene.selectionType === 2
+                        spacing: 10
+
+                        Label { text: "视口基础属性"; color: win.accentColor; font.pixelSize: 10; font.bold: true }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 8
+                            rowSpacing: 6
+
+                            Label { text: "视口 X"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: -2000; to: 4000
+                                value: scene.selectedViewportProps.x || 0; editable: true
+                                onValueModified: scene.setViewportRect(value, scene.selectedViewportProps.y || 0, scene.selectedViewportProps.width || 360, scene.selectedViewportProps.height || 480)
+                            }
+
+                            Label { text: "视口 Y"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: -2000; to: 4000
+                                value: scene.selectedViewportProps.y || 0; editable: true
+                                onValueModified: scene.setViewportRect(scene.selectedViewportProps.x || 0, value, scene.selectedViewportProps.width || 360, scene.selectedViewportProps.height || 480)
+                            }
+
+                            Label { text: "宽度 W"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 50; to: 4000
+                                value: scene.selectedViewportProps.width || 360; editable: true
+                                onValueModified: scene.setViewportRect(scene.selectedViewportProps.x || 0, scene.selectedViewportProps.y || 0, value, scene.selectedViewportProps.height || 480)
+                            }
+
+                            Label { text: "高度 H"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 50; to: 4000
+                                value: scene.selectedViewportProps.height || 480; editable: true
+                                onValueModified: scene.setViewportRect(scene.selectedViewportProps.x || 0, scene.selectedViewportProps.y || 0, scene.selectedViewportProps.width || 360, value)
+                            }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: win.borderColor }
+
+                        Label { text: "输出投影矩阵"; color: win.accentColor; font.pixelSize: 10; font.bold: true }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 8
+                            rowSpacing: 6
+
+                            Label { text: "缩放比例"; color: win.mutedColor; font.pixelSize: 10 }
+                            ComboBox {
+                                Layout.fillWidth: true
+                                model: ["1.0x (原比例)", "1.25x (高清缩放)", "1.5x (缩放)", "2.0x (4K 缩放)", "0.75x (缩小)"]
+                                currentIndex: scene.selectedViewportProps.scale === 1.25 ? 1
+                                            : scene.selectedViewportProps.scale === 1.5 ? 2
+                                            : scene.selectedViewportProps.scale === 2.0 ? 3
+                                            : scene.selectedViewportProps.scale === 0.75 ? 4 : 0
+                                onActivated: {
+                                    var s = (currentIndex === 1 ? 1.25 : (currentIndex === 2 ? 1.5 : (currentIndex === 3 ? 2.0 : (currentIndex === 4 ? 0.75 : 1.0))))
+                                    scene.setViewportScale(s)
+                                }
+                            }
+
+                            Label { text: "旋转角度"; color: win.mutedColor; font.pixelSize: 10 }
+                            ComboBox {
+                                Layout.fillWidth: true
+                                model: ["0° (正常)", "90° (垂直屏幕)", "180° (倒置)", "270° (逆向垂直)"]
+                                currentIndex: scene.selectedViewportProps.rotation === 90 ? 1
+                                            : scene.selectedViewportProps.rotation === 180 ? 2
+                                            : scene.selectedViewportProps.rotation === 270 ? 3 : 0
+                                onActivated: {
+                                    var deg = (currentIndex === 1 ? 90 : (currentIndex === 2 ? 180 : (currentIndex === 3 ? 270 : 0)))
+                                    scene.setViewportRotation(deg)
+                                }
+                            }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: win.borderColor }
+
+                        Label { text: "Swapchain 多缓冲与 Buffer Age"; color: win.accentColor; font.pixelSize: 10; font.bold: true }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Buffer 数量"; color: win.mutedColor; font.pixelSize: 10 }
+                            ComboBox {
+                                Layout.fillWidth: true
+                                model: ["2 (双缓冲 Double Buffering)", "3 (三缓冲 Triple Buffering)", "4 (四缓冲)"]
+                                currentIndex: (scene.selectedViewportProps.bufferCount === 3) ? 1 : ((scene.selectedViewportProps.bufferCount === 4) ? 2 : 0)
+                                onActivated: scene.setViewportBufferCount(currentIndex + 2)
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "持续注入 Buffer 损伤"; color: win.textColor; font.pixelSize: 10; Layout.fillWidth: true }
+                            Switch {
+                                checked: !!scene.selectedViewportProps.swapchainEnabled
+                                onToggled: scene.setViewportSwapchainEnabled(checked)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "模拟双缓冲/三缓冲 Buffer 切换时补偿的历史 Damage"
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 8
+                            rowSpacing: 6
+
+                            Label { text: "相对 X"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 0; to: 2000
+                                value: scene.selectedViewportProps.damageX || 30; editable: true
+                                onValueModified: scene.setViewportSwapchainDamageRect(value, scene.selectedViewportProps.damageY || 40, scene.selectedViewportProps.damageW || 180, scene.selectedViewportProps.damageH || 140)
+                            }
+
+                            Label { text: "相对 Y"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 0; to: 2000
+                                value: scene.selectedViewportProps.damageY || 40; editable: true
+                                onValueModified: scene.setViewportSwapchainDamageRect(scene.selectedViewportProps.damageX || 30, value, scene.selectedViewportProps.damageW || 180, scene.selectedViewportProps.damageH || 140)
+                            }
+
+                            Label { text: "宽度 W"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 1; to: 2000
+                                value: scene.selectedViewportProps.damageW || 180; editable: true
+                                onValueModified: scene.setViewportSwapchainDamageRect(scene.selectedViewportProps.damageX || 30, scene.selectedViewportProps.damageY || 40, value, scene.selectedViewportProps.damageH || 140)
+                            }
+
+                            Label { text: "高度 H"; color: win.mutedColor; font.pixelSize: 10 }
+                            SpinBox {
+                                Layout.fillWidth: true; from: 1; to: 2000
+                                value: scene.selectedViewportProps.damageH || 140; editable: true
+                                onValueModified: scene.setViewportSwapchainDamageRect(scene.selectedViewportProps.damageX || 30, scene.selectedViewportProps.damageY || 40, scene.selectedViewportProps.damageW || 180, value)
+                            }
+                        }
+                    }
+
+                    // Node 属性编辑器 (当选中 Node 时展示)
+                    ColumnLayout {
+                        width: parent.width
+                        visible: scene.selectionType === 1
 
                         Label { text: "常规"; color: win.mutedColor; font.pixelSize: 9; font.bold: true }
                         RowLayout {
@@ -1166,40 +1354,28 @@ ApplicationWindow {
                             ComboBox {
                                 id: rotationAxisCombo
                                 Layout.fillWidth: true
-                                model: [
-                                    { text: "Z 轴 (平面旋转)", axis: 2 },
-                                    { text: "X 轴 (水平翻转)", axis: 0 },
-                                    { text: "Y 轴 (垂直翻转)", axis: 1 }
-                                ]
-                                textRole: "text"
-                                valueRole: "axis"
-                                currentIndex: win.num(win.sel.rotationAxis, 2) === 0 ? 1
-                                            : (win.num(win.sel.rotationAxis, 2) === 1 ? 2 : 0)
-                                onActivated: scene.setRotationSelected(rotationSpinBox.value, currentValue)
+                                model: ["X 轴", "Y 轴", "Z 轴"]
+                                currentIndex: win.num(win.sel.rotationAxis)
+                                onActivated: scene.setRotationSelected(rotationAngleEditor.value, currentIndex)
                             }
                             Label { text: "旋转角度"; color: win.mutedColor }
                             SpinBox {
-                                id: rotationSpinBox
-                                Layout.fillWidth: true
-                                from: -360
-                                to: 360
-                                value: Math.round(win.num(win.sel.rotation))
-                                editable: true
-                                onValueModified: scene.setRotationSelected(value, rotationAxisCombo.currentValue)
+                                id: rotationAngleEditor
+                                Layout.fillWidth: true; from: -360; to: 360
+                                value: win.num(win.sel.rotation); editable: true
+                                onValueModified: scene.setRotationSelected(value, rotationAxisCombo.currentIndex)
                             }
-                            Label { text: "水平缩放"; color: win.mutedColor }
+                            Label { text: "缩放 X"; color: win.mutedColor }
                             TextField {
                                 Layout.fillWidth: true
-                                text: win.num(win.sel.sx, 1).toFixed(3)
-                                validator: DoubleValidator { bottom: 0.01; top: 20; decimals: 3 }
-                                onEditingFinished: scene.setScaleSelected(Number(text), win.num(win.sel.sy, 1))
+                                text: win.num(win.sel.scaleX).toFixed(2)
+                                onEditingFinished: scene.setScaleSelected(parseFloat(text) || 1, win.num(win.sel.scaleY))
                             }
-                            Label { text: "垂直缩放"; color: win.mutedColor }
+                            Label { text: "缩放 Y"; color: win.mutedColor }
                             TextField {
                                 Layout.fillWidth: true
-                                text: win.num(win.sel.sy, 1).toFixed(3)
-                                validator: DoubleValidator { bottom: 0.01; top: 20; decimals: 3 }
-                                onEditingFinished: scene.setScaleSelected(win.num(win.sel.sx, 1), Number(text))
+                                text: win.num(win.sel.scaleY).toFixed(2)
+                                onEditingFinished: scene.setScaleSelected(win.num(win.sel.scaleX), parseFloat(text) || 1)
                             }
                         }
                         Label {
@@ -1224,7 +1400,6 @@ ApplicationWindow {
                             Label { text: "dx"; color: win.mutedColor }
                             Label { text: win.num(win.sel.dx).toFixed(3); color: win.textColor }
                             Label { text: "dy  " + win.num(win.sel.dy).toFixed(3); color: win.textColor }
-
                         }
                         Label {
                             visible: !!win.sel.isBackdrop

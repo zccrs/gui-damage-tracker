@@ -65,12 +65,17 @@ void Tracker::mirrorNodeViews(const ViewportState &vp)
 
 QRegion Tracker::commit()
 {
-    return commit(QVector<Viewport>{{PrimaryViewport, QRect()}}).value(PrimaryViewport);
+    Viewport vp;
+    vp.id = PrimaryViewport;
+    return commit(QVector<Viewport>{vp}).value(PrimaryViewport);
 }
 
 QRegion Tracker::commit(const QRect &outputRect)
 {
-    return commit(QVector<Viewport>{{PrimaryViewport, outputRect}}).value(PrimaryViewport);
+    Viewport vp;
+    vp.id = PrimaryViewport;
+    vp.outputRect = outputRect;
+    return commit(QVector<Viewport>{vp}).value(PrimaryViewport);
 }
 
 QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &viewports)
@@ -87,6 +92,16 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
     QHash<ViewportId, QRegion> extra;
     bool extraDamage = false;
     for (const Viewport &in : viewports) {
+        if (!in.damage.isEmpty()) {
+            QRegion clippedDamage = in.damage;
+            if (!in.outputRect.isEmpty())
+                clippedDamage &= in.outputRect;
+            if (!clippedDamage.isEmpty()) {
+                extra[in.id] += clippedDamage;
+                extraDamage = true;
+            }
+        }
+
         const auto it = m_lastViewports.constFind(in.id);
         if (it == m_lastViewports.cend()) {
             if (m_hasCommitted) {
@@ -98,13 +113,12 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
                                             QRegion(m_root->subtreeBounds()));
                 }
                 if (!damage.isEmpty()) {
-                    extra.insert(in.id, damage);
+                    extra[in.id] += damage;
                     extraDamage = true;
                 }
             }
             continue;
         }
-
         if (it->worldToOutput != in.worldToOutput) {
             QRegion damage;
             if (!in.outputRect.isEmpty()) {

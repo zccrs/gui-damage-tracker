@@ -2,7 +2,8 @@
 
 #include <QDateTime>
 #include <QPainter>
-
+#include <QPainterPath>
+#include <QRegion>
 
 static QColor interpolateColor(const QColor &newest, const QColor &oldest, qreal progress)
 {
@@ -64,18 +65,39 @@ void DamageOverlay::setRefreshRate(int refreshRate)
 void DamageOverlay::paintRects(QPainter *painter, const QVariantList &rects,
                                const QColor &color)
 {
-    painter->save();
-    painter->setCompositionMode(QPainter::CompositionMode_Source);
-    painter->setPen(Qt::NoPen);
+    if (rects.isEmpty())
+        return;
+
+    QRegion region;
     for (const QVariant &value : rects) {
         const QVariantMap rect = value.toMap();
-        const QRectF geometry(rect.value(QStringLiteral("x")).toReal(),
-                              rect.value(QStringLiteral("y")).toReal(),
-                              rect.value(QStringLiteral("w")).toReal(),
-                              rect.value(QStringLiteral("h")).toReal());
+        const QRect geometry(rect.value(QStringLiteral("x")).toInt(),
+                             rect.value(QStringLiteral("y")).toInt(),
+                             rect.value(QStringLiteral("w")).toInt(),
+                             rect.value(QStringLiteral("h")).toInt());
         if (!geometry.isEmpty())
-            painter->fillRect(geometry, color);
+            region += geometry;
     }
+
+    if (region.isEmpty())
+        return;
+
+    painter->save();
+    painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+    // 1. 统一填充整块 QRegion 区域
+    for (const QRect &r : region)
+        painter->fillRect(r, color);
+
+    // 2. 构造整块 Region 的外轮廓路径，消解内部所有矩形拼缝，只绘制最外围轮廓
+    QPainterPath path;
+    path.addRegion(region);
+    const QPainterPath outerContour = path.simplified();
+
+    QColor borderColor = color;
+    borderColor.setAlpha(qMin(255, color.alpha() * 2 + 50));
+    painter->strokePath(outerContour, QPen(borderColor, 1.5, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+
     painter->restore();
 }
 

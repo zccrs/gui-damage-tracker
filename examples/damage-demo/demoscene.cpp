@@ -71,6 +71,137 @@ DemoScene::DemoScene(QObject *parent)
     loadPreset(QStringLiteral("occlusion"));
 }
 
+QRect DemoScene::viewportA() const
+{
+    return m_vpA.outputRect;
+}
+
+QRect DemoScene::viewportB() const
+{
+    return m_vpB.outputRect;
+}
+
+int DemoScene::selectionType() const
+{
+    if (m_selectedId != 0)
+        return 1; // Node
+    if (m_selectedViewportId >= 0)
+        return 2; // Viewport
+    return 0; // None
+}
+
+void DemoScene::setSelectedViewportId(int id)
+{
+    selectViewport(id);
+}
+
+void DemoScene::selectNode(quint64 id)
+{
+    m_selectedViewportId = -1;
+    setSelectedId(id);
+    emit selectionChanged();
+    emit selectedViewportPropsChanged();
+}
+
+void DemoScene::selectViewport(int viewportId)
+{
+    m_selectedId = 0;
+    m_selectedViewportId = viewportId;
+    emit selectedIdChanged();
+    emit selectedPropsChanged();
+    emit selectionChanged();
+    emit selectedViewportPropsChanged();
+}
+
+DemoScene::ViewportConfig *DemoScene::currentSelectedViewportConfig()
+{
+    if (m_selectedViewportId == 0)
+        return &m_vpA;
+    if (m_selectedViewportId == 1)
+        return &m_vpB;
+    return nullptr;
+}
+
+QVariantMap DemoScene::selectedViewportProps() const
+{
+    const ViewportConfig *vp = (m_selectedViewportId == 1) ? &m_vpB : (m_selectedViewportId == 0 ? &m_vpA : nullptr);
+    if (!vp)
+        return {};
+    QVariantMap map;
+    map.insert(QStringLiteral("id"), vp->id);
+    map.insert(QStringLiteral("name"), vp->name);
+    map.insert(QStringLiteral("x"), vp->outputRect.x());
+    map.insert(QStringLiteral("y"), vp->outputRect.y());
+    map.insert(QStringLiteral("width"), vp->outputRect.width());
+    map.insert(QStringLiteral("height"), vp->outputRect.height());
+    map.insert(QStringLiteral("scale"), vp->scale);
+    map.insert(QStringLiteral("rotation"), vp->rotation);
+    map.insert(QStringLiteral("bufferCount"), vp->bufferCount);
+    map.insert(QStringLiteral("swapchainEnabled"), vp->swapchainEnabled);
+    map.insert(QStringLiteral("damageX"), vp->swapchainDamageRect.x());
+    map.insert(QStringLiteral("damageY"), vp->swapchainDamageRect.y());
+    map.insert(QStringLiteral("damageW"), vp->swapchainDamageRect.width());
+    map.insert(QStringLiteral("damageH"), vp->swapchainDamageRect.height());
+    return map;
+}
+
+void DemoScene::setViewportRect(int x, int y, int w, int h)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->outputRect = QRect(x, y, w, h);
+        emit sceneChanged();
+        emit selectedViewportPropsChanged();
+        maybeCommit();
+    }
+}
+
+void DemoScene::setViewportScale(qreal scale)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->scale = scale;
+        emit sceneChanged();
+        emit selectedViewportPropsChanged();
+        maybeCommit();
+    }
+}
+
+void DemoScene::setViewportRotation(qreal degrees)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->rotation = degrees;
+        emit sceneChanged();
+        emit selectedViewportPropsChanged();
+        maybeCommit();
+    }
+}
+
+void DemoScene::setViewportBufferCount(int count)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->bufferCount = qBound(1, count, 8);
+        emit selectedViewportPropsChanged();
+    }
+}
+
+void DemoScene::setViewportSwapchainEnabled(bool enabled)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->swapchainEnabled = enabled;
+        emit selectedViewportPropsChanged();
+        maybeCommit();
+    }
+}
+
+void DemoScene::setViewportSwapchainDamageRect(int x, int y, int w, int h)
+{
+    if (auto *vp = currentSelectedViewportConfig()) {
+        vp->swapchainDamageRect = QRect(x, y, w, h);
+        emit selectedViewportPropsChanged();
+        if (vp->swapchainEnabled)
+            maybeCommit();
+    }
+}
+
 DemoScene::~DemoScene() = default;
 
 void DemoScene::resetRoot()
@@ -91,10 +222,15 @@ void DemoScene::resetRoot()
 
 void DemoScene::setSelectedId(quint64 id)
 {
-    if (m_selectedId == id)
+    m_selectedViewportId = -1;
+    if (m_selectedId == id) {
+        emit selectionChanged();
+        emit selectedViewportPropsChanged();
         return;
+    }
     m_selectedId = id;
-
+    emit selectionChanged();
+    emit selectedViewportPropsChanged();
     // Decompose transform state from matrix (best effort).
     if (Node *n = findNode(id)) {
         if (auto *tr = n->toTransform()) {
@@ -179,6 +315,7 @@ void DemoScene::setDemoRunning(bool running)
         m_demoTimer.stop();
     emit demoRunningChanged();
 }
+
 
 
 void DemoScene::loadDemoScene(const QString &name)
@@ -536,6 +673,16 @@ void DemoScene::clearTree()
     emit damageChanged();
 }
 
+void DemoScene::injectSwapchainDamage(int viewportIndex, int x, int y, int w, int h)
+{
+    if (viewportIndex == 0) {
+        m_injectedBufferDamageA += QRegion(m_vpA.outputRect.x() + x, m_vpA.outputRect.y() + y, w, h);
+    } else {
+        m_injectedBufferDamageB += QRegion(m_vpB.outputRect.x() + x, m_vpB.outputRect.y() + y, w, h);
+    }
+    commit();
+}
+
 void DemoScene::loadPreset(const QString &name)
 {
     resetRoot();
@@ -607,7 +754,6 @@ void DemoScene::loadPreset(const QString &name)
 
     commit();
 }
-
 void DemoScene::buildDemoScene(const QString &name)
 {
     if (name == QLatin1String("content")) {
@@ -832,10 +978,45 @@ void DemoScene::commit()
 
 void DemoScene::updateDamage(bool rebuildScene)
 {
-    m_tracker.commit({
-        {0, m_viewportA},
-        {1, m_viewportB},
-    });
+    Tracker::Viewport vp0;
+    vp0.id = 0;
+    vp0.outputRect = m_vpA.outputRect;
+    QTransform t0;
+    if (m_vpA.scale != 1.0)
+        t0.scale(m_vpA.scale, m_vpA.scale);
+    if (m_vpA.rotation != 0.0)
+        t0.rotate(m_vpA.rotation, Qt::ZAxis);
+    vp0.worldToOutput = t0;
+    if (m_vpA.swapchainEnabled) {
+        vp0.damage = QRegion(m_vpA.outputRect.x() + m_vpA.swapchainDamageRect.x(),
+                             m_vpA.outputRect.y() + m_vpA.swapchainDamageRect.y(),
+                             m_vpA.swapchainDamageRect.width(),
+                             m_vpA.swapchainDamageRect.height());
+    } else {
+        vp0.damage = m_injectedBufferDamageA;
+    }
+
+    Tracker::Viewport vp1;
+    vp1.id = 1;
+    vp1.outputRect = m_vpB.outputRect;
+    QTransform t1;
+    if (m_vpB.scale != 1.0)
+        t1.scale(m_vpB.scale, m_vpB.scale);
+    if (m_vpB.rotation != 0.0)
+        t1.rotate(m_vpB.rotation, Qt::ZAxis);
+    vp1.worldToOutput = t1;
+    if (m_vpB.swapchainEnabled) {
+        vp1.damage = QRegion(m_vpB.outputRect.x() + m_vpB.swapchainDamageRect.x(),
+                             m_vpB.outputRect.y() + m_vpB.swapchainDamageRect.y(),
+                             m_vpB.swapchainDamageRect.width(),
+                             m_vpB.swapchainDamageRect.height());
+    } else {
+        vp1.damage = m_injectedBufferDamageB;
+    }
+
+    m_injectedBufferDamageA = {};
+    m_injectedBufferDamageB = {};
+    m_tracker.commit({vp0, vp1});
     const QRegion damageA = m_tracker.damage(0);
     const QRegion damageB = m_tracker.damage(1);
     m_damageRects = regionToRects(damageA);

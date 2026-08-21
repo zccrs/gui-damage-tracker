@@ -23,6 +23,7 @@ public:
         ViewportId id = PrimaryViewport;
         QRect outputRect; // output coordinates; empty means no clipping
         QTransform worldToOutput = QTransform(); // invertible 2D affine transform
+        QRegion damage; // Viewport/Swapchain buffer damage in output coordinates
     };
 
     Tracker() = default;
