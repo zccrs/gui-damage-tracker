@@ -36,6 +36,40 @@ static QString regionStr(const QRegion &r)
              qPrintable(QStringLiteral("actual=%1 does not contain %2")                        \
                             .arg(regionStr(actual), regionStr(expected))))
 
+class TestTracker : public Tracker
+{
+public:
+    using Tracker::Tracker;
+    using Tracker::commit;
+
+    QRegion commit()
+    {
+        m_viewport.outputRect = {};
+        m_viewport.worldToOutput = {};
+        m_viewport.damage = {};
+        QVector<Viewport> viewports;
+        viewports.append(std::move(m_viewport));
+        Tracker::commit(viewports);
+        m_viewport = std::move(viewports.first());
+        return m_viewport.state.damage;
+    }
+
+    QRegion commit(const QRect &outputRect)
+    {
+        m_viewport.outputRect = outputRect;
+        m_viewport.worldToOutput = {};
+        m_viewport.damage = {};
+        QVector<Viewport> viewports;
+        viewports.append(std::move(m_viewport));
+        Tracker::commit(viewports);
+        m_viewport = std::move(viewports.first());
+        return m_viewport.state.damage;
+    }
+
+private:
+    Viewport m_viewport;
+};
+
 class tst_Gdt : public QObject
 {
     Q_OBJECT
@@ -123,7 +157,7 @@ private slots:
 void tst_Gdt::emptyCommit()
 {
     Node root;
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion());
 }
 
@@ -134,7 +168,7 @@ void tst_Gdt::addGeometry()
     g->setBoundingRect(QRectF(10, 20, 30, 40));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(10, 20, 30, 40));
     QCOMPARE(g->worldBounds(), QRect(10, 20, 30, 40));
     QVERIFY(!g->isFullyOccluded());
@@ -147,7 +181,7 @@ void tst_Gdt::idempotentCommit()
     g->setBoundingRect(QRectF(0, 0, 50, 50));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVERIFY(!tracker.commit().isEmpty());
     COMPARE_REGION(tracker.commit(), QRegion());
     COMPARE_REGION(tracker.commit(), QRegion());
@@ -160,7 +194,7 @@ void tst_Gdt::removeGeometry()
     g->setBoundingRect(QRectF(5, 5, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     root.removeChild(g);
@@ -171,7 +205,7 @@ void tst_Gdt::removeGeometry()
 void tst_Gdt::addRemoveSameFrame()
 {
     Node root;
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     auto *g = new GeometryNode;
@@ -190,7 +224,7 @@ void tst_Gdt::moveGeometryRect()
     g->setBoundingRect(QRectF(0, 0, 20, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->setBoundingRect(QRectF(50, 50, 20, 20));
@@ -204,7 +238,7 @@ void tst_Gdt::resizeGeometry()
     g->setBoundingRect(QRectF(0, 0, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->setBoundingRect(QRectF(0, 0, 30, 10));
@@ -218,7 +252,7 @@ void tst_Gdt::partialContentDamage()
     g->setBoundingRect(QRectF(0, 0, 100, 100));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->markContentDirty(QRect(10, 15, 4, 5));
@@ -232,7 +266,7 @@ void tst_Gdt::contentDamageClippedToBounds()
     g->setBoundingRect(QRectF(0, 0, 20, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->markContentDirty(QRect(-10, -10, 15, 15));
@@ -248,7 +282,7 @@ void tst_Gdt::hideShow()
     g->setBoundingRect(QRectF(8, 8, 16, 16));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->setVisible(false);
@@ -269,7 +303,7 @@ void tst_Gdt::hideShowSameFrame()
     g->setBoundingRect(QRectF(0, 0, 12, 12));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->setVisible(false);
@@ -284,7 +318,7 @@ void tst_Gdt::hideThenRemoveWithoutCommit()
     g->setBoundingRect(QRectF(1, 2, 3, 4));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->setVisible(false);
@@ -303,7 +337,7 @@ void tst_Gdt::translateTransform()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(10, 20, 5, 6));
 
     tr->setTranslation(40, 20);
@@ -323,7 +357,7 @@ void tst_Gdt::nestedTransforms()
     a->appendChild(b);
     root.appendChild(a);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(11, 22, 3, 4));
 }
 
@@ -337,7 +371,7 @@ void tst_Gdt::scaleTransform()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(2, 3, 8, 6));
 }
 
@@ -357,7 +391,7 @@ void tst_Gdt::rotate90()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     const QRegion d = tracker.commit();
     QVERIFY(!d.isEmpty());
     QCOMPARE(d.boundingRect().width() > 0, true);
@@ -381,7 +415,7 @@ void tst_Gdt::rotate45Conservative()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     const QRegion d = tracker.commit();
     const QRect aabb = g->worldBounds();
     QVERIFY(d.boundingRect().contains(aabb) || d == QRegion(aabb) || (d & aabb) == QRegion(aabb));
@@ -404,7 +438,7 @@ void tst_Gdt::siblingOcclusionFullyCovered()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     QVERIFY(back->isFullyOccluded());
@@ -428,7 +462,7 @@ void tst_Gdt::siblingOcclusionPartial()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     QVERIFY(!back->isFullyOccluded());
@@ -454,7 +488,7 @@ void tst_Gdt::transparentDoesNotOcclude()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(!back->isFullyOccluded());
 
@@ -475,7 +509,7 @@ void tst_Gdt::parentGeometryBehindChildren()
     parent->appendChild(child);
     root.appendChild(parent);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(parent->isFullyOccluded());
     QVERIFY(!child->isFullyOccluded());
@@ -492,7 +526,7 @@ void tst_Gdt::occludedRegionReported()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QCOMPARE(back->occludedRegion(), QRegion(10, 0, 20, 30));
     QVERIFY(!back->isFullyOccluded());
@@ -509,7 +543,7 @@ void tst_Gdt::backdropNoExpansion()
     root.appendChild(behind);
     root.appendChild(bg);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(25, 25, 2, 2));
@@ -529,7 +563,7 @@ void tst_Gdt::backdropExpansion()
     root.appendChild(behind);
     root.appendChild(bg);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(50, 50, 1, 1));
@@ -545,7 +579,7 @@ void tst_Gdt::backdropOwnDamageDoesNotInduce()
     bg->setBackdropExpansion(5);
     root.appendChild(bg);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     bg->markContentDirty(QRect(50, 50, 1, 1));
@@ -565,7 +599,7 @@ void tst_Gdt::backdropSamplesOutsideBounds()
     root.appendChild(behind);
     root.appendChild(bg);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     // 3px left of the backdrop node, inside the 5px sample margin.
@@ -588,7 +622,7 @@ void tst_Gdt::backdropClipBleed()
     root.appendChild(behind);
     root.appendChild(bg);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(50, 50, 2, 2));
@@ -611,7 +645,7 @@ void tst_Gdt::nestedBackdrop()
     root.appendChild(inner);
     root.appendChild(outer);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(100, 100, 1, 1));
@@ -631,7 +665,7 @@ void tst_Gdt::insertBetweenSiblings()
     root.appendChild(a);
     root.appendChild(c);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     auto *b = new GeometryNode;
@@ -655,7 +689,7 @@ void tst_Gdt::reparent()
     root.appendChild(t1);
     root.appendChild(t2);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     t2->appendChild(g);
@@ -674,7 +708,7 @@ void tst_Gdt::raiseLowersZOrder()
     root.appendChild(a);
     root.appendChild(b);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(a->isFullyOccluded());
     QVERIFY(!b->isFullyOccluded());
@@ -692,7 +726,7 @@ void tst_Gdt::viewportClip()
     g->setBoundingRect(QRectF(10, 10, 20, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(QRect(20, 10, 20, 20)), QRegion(20, 10, 10, 20));
     COMPARE_REGION(g->visibleDamage(), QRegion(20, 10, 10, 20));
     g->markContentDirty(QRect(22, 12, 2, 2));
@@ -706,7 +740,7 @@ void tst_Gdt::outsideViewport()
     g->setBoundingRect(QRectF(500, 500, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(QRect(0, 0, 100, 100)), QRegion());
     QVERIFY(g->isCulled());
     QVERIFY(!g->isFullyOccluded());
@@ -718,10 +752,11 @@ void tst_Gdt::viewportResizeDamagesStrip()
     Node spacer;
     root.appendChild(&spacer);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit(QRect(0, 0, 80, 80));
-    const QRegion d = tracker.commit(QRect(0, 0, 80, 100));
-    CONTAINS_REGION(d, QRegion(0, 80, 80, 20));
+    QVector<Viewport> vps{Viewport{QRect(0, 0, 80, 100), QTransform(), QRegion(0, 80, 80, 20)}};
+    tracker.commit(vps);
+    CONTAINS_REGION(vps[0].state.damage, QRegion(0, 80, 80, 20));
 }
 
 void tst_Gdt::viewportTransformMapsDamage()
@@ -731,10 +766,8 @@ void tst_Gdt::viewportTransformMapsDamage()
     g->setBoundingRect(QRectF(10, 5, 4, 3));
     root.appendChild(g);
 
-    Tracker tracker(&root);
-    const Tracker::Viewport viewport{
-        0,
-        QRect(0, 0, 100, 100),
+    TestTracker tracker(&root);
+    const Tracker::Viewport viewport{QRect(0, 0, 100, 100),
         QTransform::fromScale(2, 2),
     };
 
@@ -754,10 +787,10 @@ void tst_Gdt::viewportTransformsCullIndependently()
     g->setBoundingRect(QRectF(100, 0, 20, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 50, 50), QTransform()},
-        {1, QRect(0, 0, 50, 50), QTransform::fromTranslate(-100, 0)},
+        {QRect(0, 0, 50, 50), QTransform()},
+        {QRect(0, 0, 50, 50), QTransform::fromTranslate(-100, 0)},
     };
     tracker.commit(vps);
 
@@ -781,9 +814,9 @@ void tst_Gdt::viewportTransformMapsOcclusion()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 100, 100), QTransform::fromScale(2, 2)},
+        {QRect(0, 0, 100, 100), QTransform::fromScale(2, 2)},
     };
     tracker.commit(vps);
 
@@ -799,13 +832,13 @@ void tst_Gdt::viewportTransformChangeDamagesOutput()
     Node spacer;
     root.appendChild(&spacer);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps1{
-        {0, QRect(0, 0, 80, 60), QTransform()},
+        {QRect(0, 0, 80, 60), QTransform()},
     };
     tracker.commit(vps1);
     QVector<Tracker::Viewport> vps2{
-        {0, QRect(0, 0, 80, 60), QTransform::fromTranslate(10, 10)},
+        {QRect(0, 0, 80, 60), QTransform::fromTranslate(10, 10), QRegion(0, 0, 80, 60)},
     };
     tracker.commit(vps2);
     COMPARE_REGION(vps2[0].state.damage, QRegion(0, 0, 80, 60));
@@ -819,7 +852,7 @@ void tst_Gdt::fullyOpaqueFlag()
     g->setFullyOpaque(true);
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QCOMPARE(g->worldOpaqueRegion(), QRegion(0, 0, 16, 16));
 
@@ -839,7 +872,7 @@ void tst_Gdt::opaqueRegionUpdate()
     root.appendChild(back);
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QCOMPARE(back->occludedRegion(), QRegion(0, 0, 10, 40));
 }
@@ -851,7 +884,7 @@ void tst_Gdt::multipleDirtyRegions()
     g->setBoundingRect(QRectF(0, 0, 200, 200));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     g->markContentDirty(QRect(0, 0, 2, 2));
@@ -868,7 +901,7 @@ void tst_Gdt::destroySubtree()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     delete tr;
@@ -884,7 +917,7 @@ void tst_Gdt::basicNodeGrouping()
     group->appendChild(g);
     root.appendChild(group);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(7, 8, 9, 10));
 }
 
@@ -897,7 +930,7 @@ void tst_Gdt::parentHideHidesChildren()
     group->appendChild(g);
     root.appendChild(group);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     group->setVisible(false);
@@ -916,7 +949,7 @@ void tst_Gdt::fractionalTranslationOverestimates()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     const QRegion d = tracker.commit();
     CONTAINS_REGION(d, QRegion(0, 0, 10, 10));
     QVERIFY(d.rectCount() >= 1);
@@ -935,7 +968,7 @@ void tst_Gdt::moveOpaqueRevealsBehind()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(back->isFullyOccluded());
 
@@ -960,7 +993,7 @@ void tst_Gdt::backdropWithTransform()
     tr->appendChild(bg);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(10, 10, 1, 1));
@@ -979,7 +1012,7 @@ void tst_Gdt::contentDamageUnderOpaqueSibling()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     back->markContentDirty(QRect(22, 22, 4, 4));
@@ -999,7 +1032,7 @@ void tst_Gdt::fullyOccludedMoveProducesNoDamage()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(back->isFullyOccluded());
 
@@ -1020,7 +1053,7 @@ void tst_Gdt::partiallyOccludedMoveAvoidsOpaqueFront()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     back->setBoundingRect(QRectF(100, 100, 260, 200));
@@ -1035,7 +1068,7 @@ void tst_Gdt::zeroSizeGeometry()
     g->setBoundingRect(QRectF(10, 10, 0, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion());
 }
 
@@ -1046,7 +1079,7 @@ void tst_Gdt::negativeCoordinates()
     g->setBoundingRect(QRectF(-30, -10, 20, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(-30, -10, 20, 20));
 }
 
@@ -1064,7 +1097,7 @@ void tst_Gdt::deepTree()
     g->setBoundingRect(QRectF(0, 0, 2, 2));
     cur->appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(32, 0, 2, 2));
 }
 
@@ -1078,7 +1111,7 @@ void tst_Gdt::setMatrixIdentityNoDamage()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     tr->setTranslation(0, 0);
@@ -1096,7 +1129,7 @@ void tst_Gdt::geometryChildrenZOrder()
     parent->appendChild(child);
     root.appendChild(parent);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     parent->markContentDirty(QRect(10, 10, 10, 10));
@@ -1120,7 +1153,7 @@ void tst_Gdt::nonAxisAlignedDropsOpaque()
     tr->appendChild(front);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(front->worldOpaqueRegion().isEmpty());
     QVERIFY(!back->isFullyOccluded());
@@ -1138,7 +1171,7 @@ void tst_Gdt::matrix4x4()
     tr->appendChild(g);
     root.appendChild(tr);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(15, 25, 4, 4));
 }
 
@@ -1152,14 +1185,14 @@ void tst_Gdt::firstCommitAppearing()
     root.appendChild(g1);
     root.appendChild(g2);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     COMPARE_REGION(tracker.commit(), QRegion(0, 0, 5, 5) + QRegion(10, 0, 5, 5));
 }
 
 void tst_Gdt::contentDirtyOnNewNode()
 {
     Node root;
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     auto *g = new GeometryNode;
@@ -1176,7 +1209,7 @@ void tst_Gdt::removeUncommittedNode()
     keep->setBoundingRect(QRectF(0, 0, 5, 5));
     root.appendChild(keep);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     auto *tmp = new GeometryNode;
@@ -1200,7 +1233,7 @@ void tst_Gdt::siblingOrderPaint()
     root.prependChild(first);
     QCOMPARE(root.firstChild(), first);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
     QVERIFY(first->isFullyOccluded());
     QVERIFY(!second->isFullyOccluded());
@@ -1223,7 +1256,7 @@ void tst_Gdt::backdropDoesNotSeeFrontDamageAsRequired()
     root.appendChild(bg);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     behind->markContentDirty(QRect(20, 20, 2, 2));
@@ -1241,10 +1274,10 @@ void tst_Gdt::twoViewportsIndependentDamage()
     root.appendChild(left);
     root.appendChild(right);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 50, 50)},
-        {1, QRect(100, 0, 50, 50)},
+        {QRect(0, 0, 50, 50)},
+        {QRect(100, 0, 50, 50)},
     };
     tracker.commit(vps);
     COMPARE_REGION(vps[0].state.damage, QRegion(0, 0, 40, 40));
@@ -1268,10 +1301,10 @@ void tst_Gdt::twoViewportsIndependentOcclusion()
     root.appendChild(back);
     root.appendChild(front);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 80, 80)},
-        {1, QRect(80, 0, 80, 80)},
+        {QRect(0, 0, 80, 80)},
+        {QRect(80, 0, 80, 80)},
     };
     tracker.commit(vps);
     QVERIFY(vps[0].state.isFullyOccluded(back));
@@ -1286,10 +1319,10 @@ void tst_Gdt::twoViewportsSingleCommitKeepsBoth()
     g->setBoundingRect(QRectF(50, 0, 60, 20));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 80, 40)},
-        {1, QRect(80, 0, 80, 40)},
+        {QRect(0, 0, 80, 40)},
+        {QRect(80, 0, 80, 40)},
     };
     tracker.commit(vps);
     COMPARE_REGION(vps[0].state.damage, QRegion(50, 0, 30, 20));
@@ -1303,10 +1336,10 @@ void tst_Gdt::twoViewportsIdempotent()
     g->setBoundingRect(QRectF(0, 0, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 50, 50)},
-        {1, QRect(50, 0, 50, 50)},
+        {QRect(0, 0, 50, 50)},
+        {QRect(50, 0, 50, 50)},
     };
     tracker.commit(vps);
     tracker.commit(vps);
@@ -1320,15 +1353,15 @@ void tst_Gdt::twoViewportsResizeOne()
     Node spacer;
     root.appendChild(&spacer);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps1{
-        {0, QRect(0, 0, 40, 40)},
-        {1, QRect(40, 0, 40, 40)},
+        {QRect(0, 0, 40, 40)},
+        {QRect(40, 0, 40, 40)},
     };
     tracker.commit(vps1);
     QVector<Tracker::Viewport> vps2{
-        {0, QRect(0, 0, 40, 40)},
-        {1, QRect(40, 0, 60, 40)},
+        {QRect(0, 0, 40, 40)},
+        {QRect(40, 0, 60, 40), QTransform(), QRegion(80, 0, 20, 40)},
     };
     tracker.commit(vps2);
     COMPARE_REGION(vps2[0].state.damage, QRegion());
@@ -1342,14 +1375,14 @@ void tst_Gdt::twoViewportsDropped()
     g->setBoundingRect(QRectF(0, 0, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps1{
-        {0, QRect(0, 0, 20, 20)},
-        {1, QRect(100, 100, 20, 20)},
+        {QRect(0, 0, 20, 20)},
+        {QRect(100, 100, 20, 20)},
     };
     tracker.commit(vps1);
     QVector<Tracker::Viewport> vps2{
-        {0, QRect(0, 0, 20, 20)},
+        {QRect(0, 0, 20, 20)},
     };
     tracker.commit(vps2);
     QCOMPARE(vps2.size(), 1);
@@ -1362,11 +1395,11 @@ void tst_Gdt::twoViewportsNewOutputFullDamage()
     g->setBoundingRect(QRectF(0, 0, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit(QRect(0, 0, 40, 40));
     QVector<Tracker::Viewport> vps{
-        {0, QRect(0, 0, 40, 40)},
-        {1, QRect(40, 0, 40, 40)},
+        {QRect(0, 0, 40, 40)},
+        {QRect(40, 0, 40, 40), QTransform(), QRegion(40, 0, 40, 40)},
     };
     tracker.commit(vps);
     COMPARE_REGION(vps[0].state.damage, QRegion());
@@ -1380,15 +1413,15 @@ void tst_Gdt::nodeAccessorsFollowPrimaryViewport()
     g->setBoundingRect(QRectF(0, 0, 10, 10));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
-        {0, QRect(50, 50, 10, 10)},
-        {1, QRect(0, 0, 20, 20)},
+        {QRect(50, 50, 10, 10)},
+        {QRect(0, 0, 20, 20)},
     };
     tracker.commit(vps);
 
-    QVERIFY(g->isCulled());
-    QVERIFY(!g->isFullyOccluded());
+    QVERIFY(g->isCulled(&vps[0]));
+    QVERIFY(!g->isFullyOccluded(&vps[0]));
     QVERIFY(vps[0].state.isCulled(g));
     QVERIFY(!vps[0].state.isFullyOccluded(g));
     QVERIFY(!vps[1].state.isCulled(g));
@@ -1414,7 +1447,7 @@ void tst_Gdt::rendererNodeBasicDamageFunction()
     });
 
     root.appendChild(rnd);
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
 
     // First commit: node appearing (ownDamage: 10,20,100,80) + inducedDamage: 0,10,120,100
     const QRegion damage = tracker.commit();
@@ -1445,7 +1478,7 @@ void tst_Gdt::rendererNodeDynamicInducedDamage()
     });
     root.appendChild(rnd);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit(); // initial commit
 
     // Now bg changes content in intersecting area (30,30,10,10)
@@ -1480,7 +1513,7 @@ void tst_Gdt::rendererNodeMatrixPropagation()
     });
     trans->appendChild(rnd);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     // local (10,10,20,20) * scale(2,2) + translate(50,30) => (70, 50, 40, 40)
@@ -1498,12 +1531,11 @@ void tst_Gdt::viewportCarryOwnDamageOnIdleTree()
     g->setBoundingRect(QRectF(10, 10, 100, 100));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit(); // initial commit
 
     // Idle tree (no changes), but viewport has swapchain/buffer damage (e.g. from buffer age)
     Tracker::Viewport vp;
-    vp.id = 0;
     vp.outputRect = QRect(0, 0, 500, 500);
     vp.damage = QRegion(50, 50, 40, 40);
 
@@ -1519,14 +1551,13 @@ void tst_Gdt::viewportDamageUnionsWithTreeDamage()
     g->setBoundingRect(QRectF(0, 0, 200, 200));
     root.appendChild(g);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     tracker.commit();
 
     // Tree has content damage in (10, 10, 30, 30), and viewport carries buffer damage in (100, 100, 50, 50)
     g->markContentDirty(QRect(10, 10, 30, 30));
 
     Tracker::Viewport vp;
-    vp.id = 0;
     vp.outputRect = QRect(0, 0, 400, 400);
     vp.damage = QRegion(100, 100, 50, 50);
 
@@ -1542,14 +1573,12 @@ void tst_Gdt::multipleViewportsIndependentBufferDamage()
     auto *g = new GeometryNode;
     g->setBoundingRect(QRectF(0, 0, 400, 400));
     root.appendChild(g);
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
 
     Tracker::Viewport initVp0;
-    initVp0.id = 0;
     initVp0.outputRect = QRect(0, 0, 800, 600);
 
     Tracker::Viewport initVp1;
-    initVp1.id = 1;
     initVp1.outputRect = QRect(0, 0, 800, 600);
 
     QVector<Tracker::Viewport> initVps{initVp0, initVp1};
@@ -1557,12 +1586,10 @@ void tst_Gdt::multipleViewportsIndependentBufferDamage()
 
     // Next frame: dual monitor outputs with independent swapchain buffer damage
     Tracker::Viewport vp0;
-    vp0.id = 0;
     vp0.outputRect = QRect(0, 0, 800, 600);
     vp0.damage = QRegion(20, 20, 30, 30);
 
     Tracker::Viewport vp1;
-    vp1.id = 1;
     vp1.outputRect = QRect(0, 0, 800, 600);
     vp1.damage = QRegion(60, 60, 40, 40);
 
@@ -1585,7 +1612,7 @@ void tst_Gdt::nodeHasContentProperty()
     container->appendChild(child);
     root.appendChild(container);
 
-    Tracker tracker(&root);
+    TestTracker tracker(&root);
     // First commit: only child generates damage, container has no own damage
     const QRegion damage1 = tracker.commit();
     COMPARE_REGION(damage1, QRegion(50, 50, 100, 100));

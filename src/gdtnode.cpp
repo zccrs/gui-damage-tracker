@@ -31,6 +31,9 @@ Node::Node(Type type)
 
 Node::~Node()
 {
+    while (m_viewportDataHead)
+        detachViewportData(m_viewportDataHead);
+
     if (m_parent)
         m_parent->removeChild(this);
 
@@ -83,6 +86,87 @@ const BackdropNode *Node::toBackdrop() const
 const RendererNode *Node::toRenderer() const
 {
     return m_type == Type::Renderer ? static_cast<const RendererNode *>(this) : nullptr;
+}
+
+const NodeViewportData *Node::viewportData(const Viewport *viewport) const
+{
+    if (!viewport)
+        return m_viewportDataHead;
+    for (const NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
+        if (curr->viewport == viewport)
+            return curr;
+    }
+    return nullptr;
+}
+
+NodeViewportData *Node::viewportData(const Viewport *viewport)
+{
+    if (!viewport)
+        return m_viewportDataHead;
+    for (NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
+        if (curr->viewport == viewport)
+            return curr;
+    }
+    return nullptr;
+}
+
+void Node::attachViewportData(NodeViewportData *data)
+{
+    if (!data)
+        return;
+    if (data->node == this)
+        return;
+    if (data->node)
+        data->node->detachViewportData(data);
+
+    data->node = this;
+    data->nextOnNode = m_viewportDataHead;
+    data->prevOnNode = nullptr;
+    if (m_viewportDataHead)
+        m_viewportDataHead->prevOnNode = data;
+    m_viewportDataHead = data;
+}
+
+void Node::detachViewportData(NodeViewportData *data)
+{
+    if (!data || data->node != this)
+        return;
+
+    if (data->prevOnNode)
+        data->prevOnNode->nextOnNode = data->nextOnNode;
+    else
+        m_viewportDataHead = data->nextOnNode;
+
+    if (data->nextOnNode)
+        data->nextOnNode->prevOnNode = data->prevOnNode;
+
+    data->node = nullptr;
+    data->nextOnNode = nullptr;
+    data->prevOnNode = nullptr;
+}
+
+QRegion Node::visibleDamage(const Viewport *viewport) const
+{
+    const auto *d = viewportData(viewport);
+    return d ? d->visibleDamage : QRegion();
+}
+
+QRegion Node::occludedRegion(const Viewport *viewport) const
+{
+    const auto *d = viewportData(viewport);
+    return d ? d->occludedRegion : QRegion();
+}
+
+bool Node::isFullyOccluded(const Viewport *viewport) const
+{
+    const auto *d = viewportData(viewport);
+    return d ? d->fullyOccluded : false;
+}
+
+bool Node::isCulled(const Viewport *viewport) const
+{
+    const auto *d = viewportData(viewport);
+    return d ? d->culled : hasContent();
 }
 
 void Node::setVisible(bool visible)
@@ -321,7 +405,7 @@ void Node::collectBackdrop(QRegion &acc)
         auto *rnd = static_cast<RendererNode *>(this);
         if (rnd->m_damageFunc) {
             RenderContext ctx;
-            ctx.viewportId = 0;
+            ctx.viewport = nullptr;
             ctx.overallDamage = acc;
             ctx.worldTransform = m_worldTransform;
             ctx.renderMatrix = m_worldTransform;
@@ -343,20 +427,17 @@ void Node::collectBackdrop(QRegion &acc)
 
 void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                           QRegion &screen, const QTransform &worldToOutput,
-                          const QRect &outputRect, QHash<quint64, NodeViewportView> *out)
+                          const QRect &outputRect, const Viewport *viewport,
+                          const std::function<NodeViewportData *(Node *)> &dataFactory)
 {
     if (!m_visible) {
         if (hasContent()) {
-            NodeViewportView view;
-            view.culled = true;
-            if (out)
-                (*out)[m_id] = std::move(view);
-            else {
-                m_visibleDamage = {};
-                m_occludedRegion = {};
-                m_fullyOccluded = false;
-                m_culled = true;
-            }
+            NodeViewportData *view = dataFactory(this);
+            view->viewport = viewport;
+            view->culled = true;
+            view->fullyOccluded = false;
+            view->occludedRegion = {};
+            view->visibleDamage = {};
         }
         return;
     }
@@ -370,7 +451,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
 
     for (Node *child = m_lastChild; child; child = child->m_prev) {
         child->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                              worldToOutput, outputRect, out);
+                              worldToOutput, outputRect, viewport, dataFactory);
     }
 
     const bool usableTransform = worldToOutput.isAffine() && worldToOutput.isInvertible();
@@ -420,29 +501,32 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         if (!outputRect.isEmpty())
             boundsRect &= outputRect;
 
-        NodeViewportView view;
+        NodeViewportData *view = dataFactory(this);
+        view->viewport = viewport;
+        view->visibleDamage = {};
         if (boundsRect.isEmpty()) {
-            view.culled = true;
+            view->culled = true;
+            view->fullyOccluded = false;
+            view->occludedRegion = {};
         } else if (!frontOpaque.isEmpty()) {
             // Check full occlusion with QRect API — avoids QRegion subtraction.
             if (frontOpaque.contains(boundsRect)) {
-                view.fullyOccluded = true;
-                view.culled = true;
-                view.occludedRegion = QRegion(boundsRect);
+                view->fullyOccluded = true;
+                view->culled = true;
+                view->occludedRegion = QRegion(boundsRect);
             } else {
+                view->fullyOccluded = false;
+                view->culled = false;
                 const QRect frontAABB = frontOpaque.boundingRect();
                 if (frontAABB.intersects(boundsRect))
-                    view.occludedRegion = frontOpaque & boundsRect;
+                    view->occludedRegion = frontOpaque & boundsRect;
+                else
+                    view->occludedRegion = {};
             }
-        }
-
-        if (out) {
-            (*out)[m_id] = std::move(view);
         } else {
-            m_visibleDamage = {};
-            m_occludedRegion = std::move(view.occludedRegion);
-            m_fullyOccluded = view.fullyOccluded;
-            m_culled = view.culled;
+            view->culled = false;
+            view->fullyOccluded = false;
+            view->occludedRegion = {};
         }
         return;
     }
@@ -466,15 +550,15 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             opaque &= outputRect;
     }
 
-    NodeViewportView view;
     QRegion visibleLocalDamage;
     QRegion nonOccludedBounds;
+    NodeViewportData *view = dataFactory(this);
+    view->viewport = viewport;
 
     if (frontOpaque.isEmpty()) {
-        // Fast path 1: 没有前方不透明遮挡物（顶层或全透明场景）
-        view.occludedRegion = {};
-        view.fullyOccluded = false;
-        view.culled = boundsReg.isEmpty();
+        view->occludedRegion = {};
+        view->fullyOccluded = false;
+        view->culled = boundsReg.isEmpty();
         nonOccludedBounds = boundsReg;
         visibleLocalDamage = localDamage;
     } else {
@@ -482,31 +566,32 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         const QRect nodeAABB = boundsReg.boundingRect();
 
         if (!frontAABB.intersects(nodeAABB)) {
-            // Fast path 2: AABB 完全不相交，无法被遮挡
-            view.occludedRegion = {};
-            view.fullyOccluded = false;
-            view.culled = boundsReg.isEmpty();
+            view->occludedRegion = {};
+            view->fullyOccluded = false;
+            view->culled = boundsReg.isEmpty();
             nonOccludedBounds = boundsReg;
             visibleLocalDamage = localDamage;
         } else {
-            // Full path: 精确 Region 集合代数运算
-            view.occludedRegion = boundsReg & frontOpaque;
+            view->occludedRegion = boundsReg & frontOpaque;
             nonOccludedBounds = boundsReg - frontOpaque;
-            view.fullyOccluded = !boundsReg.isEmpty() && nonOccludedBounds.isEmpty();
-            view.culled = boundsReg.isEmpty() || view.fullyOccluded;
+            view->fullyOccluded = !boundsReg.isEmpty() && nonOccludedBounds.isEmpty();
+            view->culled = boundsReg.isEmpty() || view->fullyOccluded;
             visibleLocalDamage = localDamage.isEmpty() ? QRegion() : (localDamage - frontOpaque);
         }
     }
 
-    // Compute visibleDamage: split A + B into A; A += B to save one temporary.
     if (exposed.isEmpty()) {
         if (!visibleLocalDamage.isEmpty())
-            view.visibleDamage = visibleLocalDamage & boundsReg;
+            view->visibleDamage = visibleLocalDamage & boundsReg;
+        else
+            view->visibleDamage = {};
     } else {
-        if (!exposed.isEmpty() && !nonOccludedBounds.isEmpty())
-            view.visibleDamage = exposed & nonOccludedBounds;
+        if (!nonOccludedBounds.isEmpty())
+            view->visibleDamage = exposed & nonOccludedBounds;
+        else
+            view->visibleDamage = {};
         if (!visibleLocalDamage.isEmpty())
-            view.visibleDamage += visibleLocalDamage & boundsReg;
+            view->visibleDamage += visibleLocalDamage & boundsReg;
     }
 
     if (!visibleLocalDamage.isEmpty())
@@ -531,33 +616,6 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         if (!visibleLocalDamage.isEmpty())
             exposed += visibleLocalDamage;
     }
-
-    if (out) {
-        (*out)[m_id] = std::move(view);
-    } else {
-        m_visibleDamage = std::move(view.visibleDamage);
-        m_occludedRegion = std::move(view.occludedRegion);
-        m_fullyOccluded = view.fullyOccluded;
-        m_culled = view.culled;
-    }
-}
-
-void Node::applyViewsRecursive(const QHash<quint64, NodeViewportView> &views)
-{
-    const auto it = views.constFind(m_id);
-    if (it != views.cend()) {
-        m_visibleDamage = it->visibleDamage;
-        m_occludedRegion = it->occludedRegion;
-        m_fullyOccluded = it->fullyOccluded;
-        m_culled = it->culled;
-    } else {
-        m_visibleDamage = {};
-        m_occludedRegion = {};
-        m_fullyOccluded = false;
-        m_culled = hasContent();
-    }
-    for (Node *child = m_firstChild; child; child = child->m_next)
-        child->applyViewsRecursive(views);
 }
 
 void Node::commitState()

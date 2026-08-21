@@ -4,7 +4,6 @@
 #include "gdtregion.h"
 
 #include <QFlags>
-#include <QHash>
 #include <QMatrix4x4>
 #include <QRect>
 #include <QRectF>
@@ -14,22 +13,30 @@
 
 namespace Gdt {
 
+class Node;
 class Tracker;
+struct Viewport;
 class TransformNode;
 class GeometryNode;
 class BackdropNode;
 class RendererNode;
-// Per-node, per-viewport occlusion result produced by Tracker::commit().
-struct NodeViewportView {
+// Viewport-attached data owned by Viewport, linked onto Node.
+struct NodeViewportData {
     QRegion visibleDamage;
     QRegion occludedRegion;
     bool fullyOccluded = false;
     bool culled = false;
+
+    const Viewport *viewport = nullptr;
+    Node *node = nullptr;
+    NodeViewportData *nextOnNode = nullptr;
+    NodeViewportData *prevOnNode = nullptr;
 };
+using NodeView = NodeViewportData;
 
 // Context passed to RendererNode's custom damage calculation function.
 struct RenderContext {
-    quint64 viewportId = 0;
+    const Viewport *viewport = nullptr;
     QRegion overallDamage;              // Damage accumulated before this node paints
     QTransform worldTransform;          // Node's transform in world space
     QTransform renderMatrix;            // Final composite matrix (worldToOutput * worldTransform)
@@ -118,11 +125,14 @@ public:
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
     QRegion ownDamage() const { return m_ownDamage; }
     QRegion inducedDamage() const { return m_inducedDamage; }
-    QRegion visibleDamage() const { return m_visibleDamage; }
-    QRegion occludedRegion() const { return m_occludedRegion; }
-    bool isFullyOccluded() const { return m_fullyOccluded; }
-    bool isCulled() const { return m_culled; }
+    // Per-viewport attached data accessors (O(1) direct pointer or short list)
+    const NodeViewportData *viewportData(const Viewport *viewport = nullptr) const;
+    NodeViewportData *viewportData(const Viewport *viewport = nullptr);
 
+    QRegion visibleDamage(const Viewport *viewport = nullptr) const;
+    QRegion occludedRegion(const Viewport *viewport = nullptr) const;
+    bool isFullyOccluded(const Viewport *viewport = nullptr) const;
+    bool isCulled(const Viewport *viewport = nullptr) const;
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
@@ -142,8 +152,8 @@ private:
     void collectBackdrop(QRegion &acc);
     void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                         QRegion &screen, const QTransform &worldToOutput,
-                        const QRect &outputRect, QHash<quint64, NodeViewportView> *out);
-    void applyViewsRecursive(const QHash<quint64, NodeViewportView> &views);
+                        const QRect &outputRect, const Viewport *viewport,
+                        const std::function<NodeViewportData *(Node *)> &dataFactory);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
 
@@ -177,6 +187,12 @@ private:
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
+    NodeViewportData *m_viewportDataHead = nullptr;
+
+    friend struct Viewport;
+    friend struct NodeViewportData;
+    void attachViewportData(NodeViewportData *data);
+    void detachViewportData(NodeViewportData *data);
 
     static quint64 s_nextId;
 };

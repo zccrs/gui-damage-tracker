@@ -989,7 +989,6 @@ void DemoScene::commit()
 void DemoScene::updateDamage(bool rebuildScene)
 {
     Tracker::Viewport vp0;
-    vp0.id = 0;
     vp0.outputRect = m_vpA.outputRect;
     QTransform t0;
     if (m_vpA.scale != 1.0)
@@ -1007,7 +1006,6 @@ void DemoScene::updateDamage(bool rebuildScene)
     }
 
     Tracker::Viewport vp1;
-    vp1.id = 1;
     vp1.outputRect = m_vpB.outputRect;
     QTransform t1;
     if (m_vpB.scale != 1.0)

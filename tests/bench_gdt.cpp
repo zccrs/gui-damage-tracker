@@ -84,7 +84,6 @@ static QVector<Tracker::Viewport> createViewports(int count)
     vps.reserve(count);
     for (int i = 0; i < count; ++i) {
         Tracker::Viewport vp;
-        vp.id = i;
         vp.outputRect = QRect(0, 0, 1920, 1080);
         QTransform t;
         t.translate(-i * 1920.0, 0);

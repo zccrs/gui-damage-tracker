@@ -3,55 +3,53 @@
 
 #include "gdtnode.h"
 
-#include <QHash>
 #include <QRect>
 #include <QRegion>
 #include <QVector>
+#include <memory>
+#include <vector>
 
 namespace Gdt {
 
 // Mutations only mark dirty bits. commit() runs the region math. Viewports
 // are per-commit world-to-output mappings, not persistent Tracker state.
+struct Viewport {
+    QRect outputRect; // output coordinates; empty means no clipping
+    QTransform worldToOutput = QTransform(); // invertible 2D affine transform
+    QRegion damage; // In: Viewport/Swapchain buffer damage; Out: populated in state
+
+    struct State {
+        QRegion damage; // Effective computed damage region for this viewport
+        Viewport *viewport = nullptr;
+
+        bool isCulled(const Node *node) const;
+        bool isFullyOccluded(const Node *node) const;
+        QRegion visibleDamage(const Node *node) const;
+        QRegion occludedRegion(const Node *node) const;
+    } state;
+
+    // Viewport owns the attached node data instances (memory pool)
+    std::vector<std::unique_ptr<NodeViewportData>> nodeDataPool;
+
+    Viewport(const QRect &outputRect = QRect(),
+             const QTransform &worldToOutput = QTransform(),
+             const QRegion &damage = QRegion());
+    ~Viewport();
+    Viewport(const Viewport &other);
+    Viewport &operator=(const Viewport &other);
+    Viewport(Viewport &&other) noexcept;
+    Viewport &operator=(Viewport &&other) noexcept;
+
+    NodeViewportData *getOrCreateNodeData(Node *node);
+    void clearNodeData();
+};
+
+// Mutations only mark dirty bits. commit() runs the region math.
 class Tracker
 {
 public:
-    using ViewportId = quint64;
-    using NodeView = NodeViewportView;
-    static constexpr ViewportId PrimaryViewport = 0;
-
-    struct Viewport {
-        ViewportId id = PrimaryViewport;
-        QRect outputRect; // output coordinates; empty means no clipping
-        QTransform worldToOutput = QTransform(); // invertible 2D affine transform
-        QRegion damage; // In: Viewport/Swapchain buffer damage; Out: populated in state
-
-        struct State {
-            QRegion damage; // Effective computed damage region for this viewport
-            QHash<quint64, NodeView> nodes;
-
-            bool isCulled(const Node *node) const {
-                if (!node) return true;
-                const auto it = nodes.constFind(node->id());
-                return (it != nodes.cend()) ? it->culled : node->hasContent();
-            }
-            bool isFullyOccluded(const Node *node) const {
-                if (!node) return false;
-                const auto it = nodes.constFind(node->id());
-                return (it != nodes.cend()) ? it->fullyOccluded : false;
-            }
-            QRegion visibleDamage(const Node *node) const {
-                if (!node) return {};
-                const auto it = nodes.constFind(node->id());
-                return (it != nodes.cend()) ? it->visibleDamage : QRegion();
-            }
-            QRegion occludedRegion(const Node *node) const {
-                if (!node) return {};
-                const auto it = nodes.constFind(node->id());
-                return (it != nodes.cend()) ? it->occludedRegion : QRegion();
-            }
-        } state;
-    };
-
+    using Viewport = Gdt::Viewport;
+    using NodeView = NodeViewportData;
     Tracker() = default;
     explicit Tracker(Node *root);
 
@@ -61,21 +59,11 @@ public:
     // Primary commit: stateless, populates each Viewport::state in-place
     void commit(QVector<Viewport> &viewports);
 
-    // Convenience overloads
-    QRegion commit();
-    QRegion commit(const QRect &outputRect);
-
-    // Mirror node views from a given viewport to node accessors
-    void mirrorNodeViews(const Viewport &vp);
-
 private:
-    void computeViewport(Viewport &vp, const QRegion &worldDamage, const QRegion &extra);
+    void computeViewport(Viewport &viewport, const QRegion &worldDamage);
 
     Node *m_root = nullptr;
-    QHash<ViewportId, Viewport> m_lastViewports;
-    bool m_hasCommitted = false;
 };
-
 } // namespace Gdt
 
 #endif // GDTTRACKER_H
