@@ -96,6 +96,7 @@ public:
     Q_INVOKABLE void raiseSelected();
     Q_INVOKABLE void lowerSelected();
     Q_INVOKABLE void setVisibleSelected(bool visible);
+    Q_INVOKABLE void setHasContentSelected(bool hasContent);
     Q_INVOKABLE void setRectSelected(qreal x, qreal y, qreal w, qreal h);
     Q_INVOKABLE void setTranslationSelected(qreal x, qreal y);
     Q_INVOKABLE void setRotationSelected(qreal degrees, int axis = 2);

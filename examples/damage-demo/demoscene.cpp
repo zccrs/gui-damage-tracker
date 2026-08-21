@@ -523,6 +523,16 @@ void DemoScene::setVisibleSelected(bool visible)
     }
 }
 
+void DemoScene::setHasContentSelected(bool hasContent)
+{
+    if (Node *n = findNode(m_selectedId)) {
+        n->setHasContent(hasContent);
+        rebuildLists();
+        refreshSelectedProps();
+        maybeCommit();
+    }
+}
+
 
 void DemoScene::setRectSelected(qreal x, qreal y, qreal w, qreal h)
 {
@@ -1016,9 +1026,10 @@ void DemoScene::updateDamage(bool rebuildScene)
 
     m_injectedBufferDamageA = {};
     m_injectedBufferDamageB = {};
-    m_tracker.commit({vp0, vp1});
-    const QRegion damageA = m_tracker.damage(0);
-    const QRegion damageB = m_tracker.damage(1);
+    QVector<Tracker::Viewport> vps{vp0, vp1};
+    m_tracker.commit(vps);
+    const QRegion damageA = vps[0].state.damage;
+    const QRegion damageB = vps[1].state.damage;
     m_damageRects = regionToRects(damageA);
     m_damageRectsB = regionToRects(damageB);
 
@@ -1075,7 +1086,7 @@ void DemoScene::rebuildVisualNodes()
 
 void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *paintOrder)
 {
-    if (n->isDisplayable()) {
+    if (n->toGeometry() != nullptr) {
         auto *geo = n->toGeometry();
         const QRectF localRect = geo->boundingRect();
         const QTransform matrix = n->worldTransform();
@@ -1170,7 +1181,7 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
     row.insert(QStringLiteral("parentId"), n->parent() ? n->parent()->id() : 0);
     tree->append(row);
 
-    if (n->isDisplayable()) {
+    if (n->toGeometry() != nullptr) {
         auto *geo = n->toGeometry();
         const QRectF localRect = geo->boundingRect();
         const QTransform matrix = n->worldTransform();
@@ -1205,6 +1216,7 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Backdrop);
         v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
+        v.insert(QStringLiteral("hasContent"), n->hasContent());
     }
     for (Node *c = n->firstChild(); c; c = c->nextSibling())
         collectVisual(c, visual, tree, depth + 1, paintOrder);
@@ -1227,6 +1239,7 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("occluded"), n->isFullyOccluded());
     p.insert(QStringLiteral("culled"), n->isCulled());
+    p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);
     p.insert(QStringLiteral("isTransform"), n->toTransform() != nullptr);

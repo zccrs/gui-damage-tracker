@@ -93,6 +93,13 @@ void Node::setVisible(bool visible)
     markDirty(DirtyVisibility);
 }
 
+void Node::setHasContent(bool hasContent)
+{
+    if (m_hasContent == hasContent)
+        return;
+    m_hasContent = hasContent;
+    markDirty(DirtyGeometry);
+}
 
 void Node::markDirty(DirtyBits bits)
 {
@@ -258,7 +265,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
         || (m_dirty & (DirtyGeometry | DirtyOpaque))
         || visibilityFlipped;
 
-    if (isDisplayable()) {
+    if (hasContent()) {
         auto *geo = static_cast<GeometryNode *>(this);
         if (geo->m_fullyOpaque)
             geo->syncFullyOpaqueRegion();
@@ -339,7 +346,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                           const QRect &outputRect, QHash<quint64, NodeViewportView> *out)
 {
     if (!m_visible) {
-        if (isDisplayable()) {
+        if (hasContent()) {
             NodeViewportView view;
             view.culled = true;
             if (out)
@@ -392,7 +399,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             localDamage &= outputRect;
     }
 
-    if (!isDisplayable()) {
+    if (!hasContent()) {
         if (!localDamage.isEmpty())
             screen += localDamage;
         return;
@@ -547,7 +554,7 @@ void Node::applyViewsRecursive(const QHash<quint64, NodeViewportView> &views)
         m_visibleDamage = {};
         m_occludedRegion = {};
         m_fullyOccluded = false;
-        m_culled = isDisplayable();
+        m_culled = hasContent();
     }
     for (Node *child = m_firstChild; child; child = child->m_next)
         child->applyViewsRecursive(views);
@@ -581,7 +588,7 @@ void Node::dumpTreeRecursive(QString &out, int depth) const
     }
     out += QStringLiteral(" id=");
     out += QString::number(m_id);
-    if (isDisplayable()) {
+    if (hasContent()) {
         out += QStringLiteral(" bounds=");
         const QRect r = m_worldBounds.isEmpty() ? outerAligned(toGeometry()->boundingRect())
                                                 : m_worldBounds;
@@ -593,9 +600,9 @@ void Node::dumpTreeRecursive(QString &out, int depth) const
     }
     if (!m_visible)
         out += QStringLiteral(" hidden");
-    if (m_fullyOccluded && isDisplayable())
+    if (m_fullyOccluded && hasContent())
         out += QStringLiteral(" occluded");
-    else if (m_culled && isDisplayable())
+    else if (m_culled && hasContent())
         out += QStringLiteral(" culled");
     out += QLatin1Char('\n');
     for (Node *child = m_firstChild; child; child = child->m_next)
@@ -651,13 +658,14 @@ void TransformNode::setRotation(qreal degrees, Qt::Axis axis)
 GeometryNode::GeometryNode()
     : Node(Type::Geometry)
 {
+    m_hasContent = true;
 }
 
 GeometryNode::GeometryNode(Type type)
     : Node(type)
 {
+    m_hasContent = true;
 }
-
 void GeometryNode::syncFullyOpaqueRegion()
 {
     m_opaqueRegion = QRegion(innerAligned(m_boundingRect));

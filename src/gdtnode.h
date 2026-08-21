@@ -75,9 +75,8 @@ public:
     Node &operator=(const Node &) = delete;
 
     Type type() const { return m_type; }
-    bool isDisplayable() const {
-        return m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer;
-    }
+    bool hasContent() const { return m_hasContent; }
+    void setHasContent(bool hasContent);
 
     TransformNode *toTransform();
     GeometryNode *toGeometry();
@@ -131,7 +130,7 @@ public:
 
 protected:
     void markDirty(DirtyBits bits);
-
+    bool m_hasContent = false;
 private:
     friend class Tracker;
 

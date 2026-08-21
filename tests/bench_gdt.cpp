@@ -117,7 +117,7 @@ static BenchmarkResult runBenchmark(const QString &category, const QString &scen
     std::unique_ptr<Node> root(buildRealisticTree(nodeCount, &geos, &transforms, &backdrops));
     Tracker tracker(root.get());
 
-    const auto viewports = createViewports(viewportCount);
+    auto viewports = createViewports(viewportCount);
     tracker.commit(viewports); // warm-up & initial commit
 
     QElapsedTimer timer;

@@ -11,63 +11,58 @@ Tracker::Tracker(Node *root)
 
 void Tracker::setRoot(Node *root)
 {
+    if (m_root == root)
+        return;
     m_root = root;
-    m_results.clear();
     m_lastViewports.clear();
     m_hasCommitted = false;
 }
 
-const Tracker::ViewportState *Tracker::findResult(ViewportId id) const
+void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage,
+                             const QRegion &extra)
 {
-    for (const ViewportState &vp : m_results) {
-        if (vp.id == id)
-            return &vp;
-    }
-    return nullptr;
-}
-
-QRegion Tracker::computeViewport(ViewportState *vp, const QRegion &worldDamage,
-                                 const QRegion &extra)
-{
-    const bool usableTransform = vp->worldToOutput.isAffine()
-        && vp->worldToOutput.isInvertible();
+    const bool usableTransform = vp.worldToOutput.isAffine()
+        && vp.worldToOutput.isInvertible();
 
     QRegion remaining;
-    if (!usableTransform && !vp->outputRect.isEmpty()
+    if (!usableTransform && !vp.outputRect.isEmpty()
         && (!worldDamage.isEmpty() || !extra.isEmpty())) {
-        remaining = QRegion(vp->outputRect);
+        remaining = QRegion(vp.outputRect);
     } else {
-        remaining = mapRegionOuter(vp->worldToOutput, worldDamage);
+        remaining = mapRegionOuter(vp.worldToOutput, worldDamage);
         remaining += extra;
     }
-    if (!vp->outputRect.isEmpty())
-        remaining &= vp->outputRect;
+    if (!vp.outputRect.isEmpty())
+        remaining &= vp.outputRect;
 
     QRegion frontOpaque;
     QRegion exposed;
     QRegion screen;
-    vp->nodes.clear();
+    vp.state.nodes.clear();
     if (m_root)
-        vp->nodes.reserve(m_root->subtreeNodeCount());
+        vp.state.nodes.reserve(m_root->subtreeNodeCount());
     m_root->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                           vp->worldToOutput, vp->outputRect, &vp->nodes);
-    if (!vp->outputRect.isEmpty())
-        remaining &= vp->outputRect;
+                           vp.worldToOutput, vp.outputRect, &vp.state.nodes);
+
+    if (!vp.outputRect.isEmpty())
+        remaining &= vp.outputRect;
     screen += remaining;
-    vp->lastDamage = screen;
-    return screen;
+    vp.state.damage = screen;
 }
 
-void Tracker::mirrorNodeViews(const ViewportState &vp)
+void Tracker::mirrorNodeViews(const Viewport &vp)
 {
-    m_root->applyViewsRecursive(vp.nodes);
+    if (m_root)
+        m_root->applyViewsRecursive(vp.state.nodes);
 }
 
 QRegion Tracker::commit()
 {
     Viewport vp;
     vp.id = PrimaryViewport;
-    return commit(QVector<Viewport>{vp}).value(PrimaryViewport);
+    QVector<Viewport> vps{vp};
+    commit(vps);
+    return vps.first().state.damage;
 }
 
 QRegion Tracker::commit(const QRect &outputRect)
@@ -75,18 +70,21 @@ QRegion Tracker::commit(const QRect &outputRect)
     Viewport vp;
     vp.id = PrimaryViewport;
     vp.outputRect = outputRect;
-    return commit(QVector<Viewport>{vp}).value(PrimaryViewport);
+    QVector<Viewport> vps{vp};
+    commit(vps);
+    return vps.first().state.damage;
 }
 
-QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &viewports)
+void Tracker::commit(QVector<Viewport> &viewports)
 {
-    QHash<ViewportId, QRegion> out;
-
     if (!m_root) {
-        m_results.clear();
         m_lastViewports.clear();
         m_hasCommitted = true;
-        return out;
+        for (Viewport &vp : viewports) {
+            vp.state.damage = {};
+            vp.state.nodes.clear();
+        }
+        return;
     }
 
     QHash<ViewportId, QRegion> extra;
@@ -119,6 +117,7 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
             }
             continue;
         }
+
         if (it->worldToOutput != in.worldToOutput) {
             QRegion damage;
             if (!in.outputRect.isEmpty()) {
@@ -141,26 +140,14 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
 
     const bool treeDirty = m_root->isDirty();
     if (!treeDirty && !extraDamage) {
-        QVector<ViewportState> kept;
-        kept.reserve(viewports.size());
-        for (const Viewport &in : viewports) {
-            out.insert(in.id, QRegion());
-            for (ViewportState &vp : m_results) {
-                if (vp.id == in.id) {
-                    vp.lastDamage = {};
-                    vp.outputRect = in.outputRect;
-                    vp.worldToOutput = in.worldToOutput;
-                    kept.append(std::move(vp));
-                    break;
-                }
-            }
+        for (Viewport &in : viewports) {
+            in.state.damage = {};
         }
-        m_results = std::move(kept);
         m_lastViewports.clear();
         for (const Viewport &in : viewports)
             m_lastViewports.insert(in.id, in);
         m_hasCommitted = true;
-        return out;
+        return;
     }
 
     if (treeDirty)
@@ -171,22 +158,15 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
     QRegion worldDamage;
     m_root->collectBackdrop(worldDamage);
 
-    m_results.clear();
-    m_results.reserve(viewports.size());
     int mirrorIndex = -1;
-    for (const Viewport &in : viewports) {
-        ViewportState vp;
-        vp.id = in.id;
-        vp.outputRect = in.outputRect;
-        vp.worldToOutput = in.worldToOutput;
-        computeViewport(&vp, worldDamage, extra.value(in.id));
-        out.insert(in.id, vp.lastDamage);
-        m_results.append(std::move(vp));
+    for (int i = 0; i < viewports.size(); ++i) {
+        Viewport &in = viewports[i];
+        computeViewport(in, worldDamage, extra.value(in.id));
         if (mirrorIndex < 0 || in.id == PrimaryViewport)
-            mirrorIndex = m_results.size() - 1;
+            mirrorIndex = i;
     }
     if (mirrorIndex >= 0)
-        mirrorNodeViews(m_results.at(mirrorIndex));
+        mirrorNodeViews(viewports.at(mirrorIndex));
 
     if (treeDirty)
         m_root->commitState();
@@ -195,75 +175,6 @@ QHash<Tracker::ViewportId, QRegion> Tracker::commit(const QVector<Viewport> &vie
     for (const Viewport &in : viewports)
         m_lastViewports.insert(in.id, in);
     m_hasCommitted = true;
-    return out;
-}
-
-QRegion Tracker::lastDamage() const
-{
-    if (const ViewportState *primary = findResult(PrimaryViewport))
-        return primary->lastDamage;
-    if (!m_results.isEmpty())
-        return m_results.front().lastDamage;
-    return {};
-}
-
-QRegion Tracker::damage(ViewportId id) const
-{
-    if (const ViewportState *vp = findResult(id))
-        return vp->lastDamage;
-    return {};
-}
-
-QRegion Tracker::visibleDamage(ViewportId id, const Node *node) const
-{
-    if (!node)
-        return {};
-    const ViewportState *vp = findResult(id);
-    if (!vp)
-        return {};
-    const auto it = vp->nodes.constFind(node->id());
-    if (it == vp->nodes.cend())
-        return {};
-    return it->visibleDamage;
-}
-
-QRegion Tracker::occludedRegion(ViewportId id, const Node *node) const
-{
-    if (!node)
-        return {};
-    const ViewportState *vp = findResult(id);
-    if (!vp)
-        return {};
-    const auto it = vp->nodes.constFind(node->id());
-    if (it == vp->nodes.cend())
-        return {};
-    return it->occludedRegion;
-}
-
-bool Tracker::isFullyOccluded(ViewportId id, const Node *node) const
-{
-    if (!node)
-        return false;
-    const ViewportState *vp = findResult(id);
-    if (!vp)
-        return false;
-    const auto it = vp->nodes.constFind(node->id());
-    if (it == vp->nodes.cend())
-        return false;
-    return it->fullyOccluded;
-}
-
-bool Tracker::isCulled(ViewportId id, const Node *node) const
-{
-    if (!node)
-        return true;
-    const ViewportState *vp = findResult(id);
-    if (!vp)
-        return true;
-    const auto it = vp->nodes.constFind(node->id());
-    if (it == vp->nodes.cend())
-        return node->isDisplayable();
-    return it->culled;
 }
 
 } // namespace Gdt

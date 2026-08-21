@@ -1280,6 +1280,16 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
+                            Label { text: "包含自身内容 (hasContent)"; color: win.textColor; Layout.fillWidth: true }
+                            Switch {
+                                checked: win.sel.hasContent !== false
+                                onToggled: scene.setHasContentSelected(checked)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "关闭后节点变为纯几何容器，自身不参与绘制与遮挡，但子节点正常显示"
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
                             visible: !!win.sel.isGeometry
                             Label { text: "完全不透明"; color: win.textColor; Layout.fillWidth: true }
                             Switch { checked: !!win.sel.fullyOpaque; onToggled: scene.setFullyOpaqueSelected(checked) }

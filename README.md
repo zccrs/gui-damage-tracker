@@ -15,6 +15,7 @@
 
 - 🌲 **轻量级场景图抽象**：
   - `Basic Node`：空白容器节点，用于划分层级子树。
+  - `Node`：场景图基类，支持 `hasContent()` 控制自身是否绘制，支持 `setVisible()` 控制整棵子树可见性。
   - `TransformNode`：2D 仿射变换节点（平移、旋转、缩放、组合矩阵）。
   - `GeometryNode`：具有边界尺寸、内容脏区及不透明区域（`isFullyOpaque` / `opaqueRegion`）的可视内容节点。
   - `BackdropNode`：类似毛玻璃/背景模糊效果的采样节点，具有外扩半径（`backdropExpansion`），背后内容更新时自动向外发散损伤。
@@ -113,15 +114,14 @@ vp2.worldToOutput = t2;
 viewports.push_back(vp1);
 viewports.push_back(vp2);
 
-// 4. 提交计算当前帧损伤
+// 4. 提交计算当前帧损伤 (无状态就地计算，结果直接写入各 Viewport::state)
 tracker.commit(viewports);
 
-// 5. 获取各视口损伤与渲染节点
-QRegion damageVp1 = tracker.damage(1);
-qDebug() << "Viewport 1 Damage:" << damageVp1;
+// 5. 直接从对应视口获取 Damage 与节点剔除状态
+qDebug() << "Viewport 1 Damage:" << viewports[0].state.damage;
 
 // 检查节点在指定视口中是否被剔除
-if (!card->isCulled(1)) {
+if (!viewports[0].state.isCulled(card)) {
     // 执行渲染绘制...
 }
 ```
@@ -135,11 +135,12 @@ vp.id = 1;
 vp.outputRect = QRect(0, 0, 1920, 1080);
 vp.damage = getSwapchainBufferAgeDamage(); // 传入当前输出 Buffer 自身的历史 Damage
 
-auto result = tracker.commit({vp});
-// 返回的 Damage 自动融合了场景图计算出的增量 Damage 与该 Buffer 需补偿的 Swapchain Damage
-QRegion finalBufferDamage = result.value(1);
-```
+QVector<Tracker::Viewport> vps{vp};
+tracker.commit(vps);
 
+// 结果直接保存在 vps[0].state 中，自动融合了场景图增量 Damage 与 Swapchain 补偿 Damage
+QRegion finalBufferDamage = vps[0].state.damage;
+```
 ### RendererNode 自定义渲染节点示例
 
 ```cpp

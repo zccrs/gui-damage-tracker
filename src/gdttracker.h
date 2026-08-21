@@ -23,7 +23,33 @@ public:
         ViewportId id = PrimaryViewport;
         QRect outputRect; // output coordinates; empty means no clipping
         QTransform worldToOutput = QTransform(); // invertible 2D affine transform
-        QRegion damage; // Viewport/Swapchain buffer damage in output coordinates
+        QRegion damage; // In: Viewport/Swapchain buffer damage; Out: populated in state
+
+        struct State {
+            QRegion damage; // Effective computed damage region for this viewport
+            QHash<quint64, NodeView> nodes;
+
+            bool isCulled(const Node *node) const {
+                if (!node) return true;
+                const auto it = nodes.constFind(node->id());
+                return (it != nodes.cend()) ? it->culled : node->hasContent();
+            }
+            bool isFullyOccluded(const Node *node) const {
+                if (!node) return false;
+                const auto it = nodes.constFind(node->id());
+                return (it != nodes.cend()) ? it->fullyOccluded : false;
+            }
+            QRegion visibleDamage(const Node *node) const {
+                if (!node) return {};
+                const auto it = nodes.constFind(node->id());
+                return (it != nodes.cend()) ? it->visibleDamage : QRegion();
+            }
+            QRegion occludedRegion(const Node *node) const {
+                if (!node) return {};
+                const auto it = nodes.constFind(node->id());
+                return (it != nodes.cend()) ? it->occludedRegion : QRegion();
+            }
+        } state;
     };
 
     Tracker() = default;
@@ -32,35 +58,20 @@ public:
     void setRoot(Node *root);
     Node *root() const { return m_root; }
 
+    // Primary commit: stateless, populates each Viewport::state in-place
+    void commit(QVector<Viewport> &viewports);
+
+    // Convenience overloads
     QRegion commit();
     QRegion commit(const QRect &outputRect);
-    QHash<ViewportId, QRegion> commit(const QVector<Viewport> &viewports);
 
-    // All per-viewport regions use that viewport's output coordinate system.
-
-    QRegion lastDamage() const;
-    QRegion damage(ViewportId id) const;
-    QRegion visibleDamage(ViewportId id, const Node *node) const;
-    QRegion occludedRegion(ViewportId id, const Node *node) const;
-    bool isFullyOccluded(ViewportId id, const Node *node) const;
-    bool isCulled(ViewportId id, const Node *node) const;
+    // Mirror node views from a given viewport to node accessors
+    void mirrorNodeViews(const Viewport &vp);
 
 private:
-    struct ViewportState {
-        ViewportId id = PrimaryViewport;
-        QRect outputRect;
-        QTransform worldToOutput;
-        QRegion lastDamage;
-        QHash<quint64, NodeView> nodes;
-    };
-
-    const ViewportState *findResult(ViewportId id) const;
-    QRegion computeViewport(ViewportState *vp, const QRegion &worldDamage,
-                            const QRegion &extra);
-    void mirrorNodeViews(const ViewportState &vp);
+    void computeViewport(Viewport &vp, const QRegion &worldDamage, const QRegion &extra);
 
     Node *m_root = nullptr;
-    QVector<ViewportState> m_results;
     QHash<ViewportId, Viewport> m_lastViewports;
     bool m_hasCommitted = false;
 };
