@@ -18,6 +18,7 @@
   - `TransformNode`：2D 仿射变换节点（平移、旋转、缩放、组合矩阵）。
   - `GeometryNode`：具有边界尺寸、内容脏区及不透明区域（`isFullyOpaque` / `opaqueRegion`）的可视内容节点。
   - `BackdropNode`：类似毛玻璃/背景模糊效果的采样节点，具有外扩半径（`backdropExpansion`），背后内容更新时自动向外发散损伤。
+  - `RendererNode`：自定义渲染节点，支持注册 `DamageFunction` 回调，根据轮到自己绘制时的当前整体 Damage 数据及渲染变换矩阵动态计算自适应 Damage 区域。
 - 🎯 **多 Viewport 矩阵映射与独立计算**：
   - 单次遍历统一提取世界坐标损伤，针对每个 Viewport 的 `worldToOutput` 矩阵（支持缩放、旋转、偏移）进行精准映射。
   - 每个 Viewport 拥有独立的有效损伤区域（`visibleDamage`）与遮挡判定。
@@ -122,6 +123,24 @@ qDebug() << "Viewport 1 Damage:" << damageVp1;
 if (!card->isCulled(1)) {
     // 执行渲染绘制...
 }
+```
+
+### RendererNode 自定义渲染节点示例
+
+```cpp
+auto *customRenderer = new RendererNode();
+customRenderer->setBoundingRect(QRectF(0, 0, 300, 200));
+
+// 设置自定义 Damage 计算函数
+customRenderer->setDamageFunction([](const RenderContext &ctx) -> QRegion {
+    // ctx 包含当前累积的 overallDamage、世界矩阵 worldTransform、最终渲染矩阵 renderMatrix 等
+    if (!ctx.overallDamage.isEmpty() && ctx.overallDamage.intersects(ctx.worldBounds)) {
+        // 当后方内容发生变化时，自身产生带有 20px 光晕外扩的重绘损伤
+        return ctx.worldBounds.adjusted(-20, -20, 20, 20);
+    }
+    return ctx.worldBounds;
+});
+root->appendChild(customRenderer);
 ```
 
 ---

@@ -256,6 +256,11 @@ ApplicationWindow {
         onTriggered: scene.addBackdrop()
     }
     Action {
+        id: addRendererAction
+        text: "自定义渲染节点"
+        onTriggered: scene.addRenderer()
+    }
+    Action {
         id: addGroupAction
         text: "分组节点"
         onTriggered: scene.addBasic()
@@ -298,6 +303,7 @@ ApplicationWindow {
         MenuItem { action: addGeometryAction }
         MenuItem { action: addTransformAction }
         MenuItem { action: addBackdropAction }
+        MenuItem { action: addRendererAction }
         MenuSeparator {}
         MenuItem { action: addGroupAction }
     }
@@ -310,9 +316,9 @@ ApplicationWindow {
             MenuItem { action: addGeometryAction }
             MenuItem { action: addTransformAction }
             MenuItem { action: addBackdropAction }
+            MenuItem { action: addRendererAction }
             MenuItem { action: addGroupAction }
         }
-        MenuSeparator {}
         MenuItem { action: moveUpAction }
         MenuItem { action: moveDownAction }
         MenuItem { action: visibilityAction }

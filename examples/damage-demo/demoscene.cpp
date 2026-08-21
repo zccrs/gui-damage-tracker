@@ -27,6 +27,8 @@ static QString typeString(Node::Type t)
         return QStringLiteral("Geometry");
     case Node::Type::Backdrop:
         return QStringLiteral("Backdrop");
+    case Node::Type::Renderer:
+        return QStringLiteral("Renderer");
     }
     return {};
 }
@@ -158,13 +160,14 @@ QVariantList DemoScene::demoScenes() const
                     {QStringLiteral("value"), QStringLiteral("backdrop")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("揭露后方节点")},
                     {QStringLiteral("value"), QStringLiteral("reveal")}},
+        QVariantMap{{QStringLiteral("text"), QStringLiteral("自定义渲染节点")},
+                    {QStringLiteral("value"), QStringLiteral("renderer")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("旋转节点")},
                     {QStringLiteral("value"), QStringLiteral("rotation")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("缩放节点")},
                     {QStringLiteral("value"), QStringLiteral("scale")}},
     };
 }
-
 void DemoScene::setDemoRunning(bool running)
 {
     if (m_demoRunning == running)
@@ -319,6 +322,24 @@ void DemoScene::addBackdrop()
     n->setBackdropExpansion(12);
     parentForInsert()->appendChild(n);
     m_decor.insert(n->id(), Decor{QColor("#00bcd4")});
+    setSelectedId(n->id());
+    maybeCommit();
+}
+
+void DemoScene::addRenderer()
+{
+    auto *n = new RendererNode;
+    n->setName(QStringLiteral("自定义渲染"));
+    n->setBoundingRect(QRectF(60 + m_colorIndex * 16, 60 + m_colorIndex * 12, 180, 120));
+    n->setDamageFunction([](const RenderContext &ctx) -> QRegion {
+        if (!ctx.overallDamage.isEmpty() && ctx.overallDamage.intersects(ctx.worldBounds)) {
+            // 自适应动态外扩 Damage
+            return ctx.worldBounds.adjusted(-24, -24, 24, 24);
+        }
+        return ctx.worldBounds;
+    });
+    parentForInsert()->appendChild(n);
+    m_decor.insert(n->id(), Decor{QColor("#ff7043")});
     setSelectedId(n->id());
     maybeCommit();
 }
@@ -704,6 +725,33 @@ void DemoScene::buildDemoScene(const QString &name)
         return;
     }
 
+    if (name == QLatin1String("renderer")) {
+        auto *wall = new GeometryNode;
+        wall->setName(QStringLiteral("底层动态卡片"));
+        wall->setBoundingRect(QRectF(60, 60, 240, 180));
+        wall->setFullyOpaque(true);
+        m_decor.insert(wall->id(), Decor{QColor("#5b8def")});
+
+        auto *rnd = new RendererNode;
+        rnd->setName(QStringLiteral("自适应渲染器"));
+        rnd->setBoundingRect(QRectF(140, 100, 240, 160));
+        rnd->setDamageFunction([](const RenderContext &ctx) -> QRegion {
+            if (!ctx.overallDamage.isEmpty() && ctx.overallDamage.intersects(ctx.worldBounds)) {
+                // 当后方内容变化时产生外扩 24px 的光晕损伤
+                return ctx.worldBounds.adjusted(-24, -24, 24, 24);
+            }
+            return ctx.worldBounds;
+        });
+        m_decor.insert(rnd->id(), Decor{QColor("#ff7043")});
+
+        m_root->appendChild(wall);
+        m_root->appendChild(rnd);
+        m_demoNodeA = wall->id();
+        m_demoNodeB = rnd->id();
+        setSelectedId(rnd->id());
+        return;
+    }
+
     auto *back = new GeometryNode;
     back->setName(QStringLiteral("被遮挡内容"));
     back->setBoundingRect(QRectF(80, 80, 260, 200));
@@ -737,6 +785,11 @@ void DemoScene::advanceDemoFrame()
         if (auto *node = findNode(m_demoNodeA)) {
             if (auto *geometry = node->toGeometry())
                 geometry->markContentDirty(QRect(36 + triangle, 46, 24, 18));
+        }
+    } else if (m_demoSceneName == QLatin1String("renderer")) {
+        if (auto *node = findNode(m_demoNodeA)) {
+            if (auto *geometry = node->toGeometry())
+                geometry->setBoundingRect(QRectF(60 + triangle * 2, 60, 240, 180));
         }
     } else if (m_demoSceneName == QLatin1String("rotation")) {
         if (auto *node = findNode(m_demoNodeA)) {
@@ -896,6 +949,13 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
                     .arg(qRound(r.width()))
                     .arg(qRound(r.height()))
                     .arg(bg->backdropExpansion().left());
+    } else if (n->type() == Node::Type::Renderer) {
+        auto *rnd = static_cast<RendererNode *>(n);
+        const QRectF r = rnd->boundingRect();
+        label = QStringLiteral("自定义渲染 #%1 [%2x%3 动态计算]")
+                    .arg(n->id())
+                    .arg(qRound(r.width()))
+                    .arg(qRound(r.height()));
     } else if (auto *geometry = n->toGeometry()) {
         const QRectF r = geometry->boundingRect();
         const QString typeDesc = geometry->isFullyOpaque() ? QStringLiteral("不透明几何")
@@ -905,8 +965,8 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
                     .arg(n->id())
                     .arg(qRound(r.width()))
                     .arg(qRound(r.height()));
-    } else if (auto *tr = n->toTransform()) {
-        const QTransform m = tr->matrix();
+    } else if (auto *transNode = n->toTransform()) {
+        const QTransform m = transNode->matrix();
         label = QStringLiteral("变换节点 #%1 (dx:%2, dy:%3)")
                     .arg(n->id())
                     .arg(qRound(m.dx()))

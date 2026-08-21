@@ -18,13 +18,25 @@ class Tracker;
 class TransformNode;
 class GeometryNode;
 class BackdropNode;
-
+class RendererNode;
 // Per-node, per-viewport occlusion result produced by Tracker::commit().
 struct NodeViewportView {
     QRegion visibleDamage;
     QRegion occludedRegion;
     bool fullyOccluded = false;
     bool culled = false;
+};
+
+// Context passed to RendererNode's custom damage calculation function.
+struct RenderContext {
+    quint64 viewportId = 0;
+    QRegion overallDamage;              // Damage accumulated before this node paints
+    QTransform worldTransform;          // Node's transform in world space
+    QTransform renderMatrix;            // Final composite matrix (worldToOutput * worldTransform)
+    QRectF boundingRect;                // Node's local bounding rectangle
+    QRect worldBounds;                  // Node's world bounding rectangle
+    QRect outputBounds;                 // Node's output bounding rectangle in current viewport
+    RendererNode *node = nullptr;       // Pointer to the node being evaluated
 };
 
 // Scene-graph node used for GUI damage precomputation.
@@ -41,9 +53,9 @@ public:
         Basic = 0,     // grouping only
         Transform,     // local 2D matrix applied to descendants
         Geometry,      // visible content
-        Backdrop       // visible; expands damage from content behind it
+        Backdrop,      // visible; expands damage from content behind it
+        Renderer       // visible; dynamically computes damage via custom function
     };
-
     enum DirtyBit {
         DirtyMatrix      = 1 << 0,
         DirtyGeometry    = 1 << 1,
@@ -63,18 +75,21 @@ public:
     Node &operator=(const Node &) = delete;
 
     Type type() const { return m_type; }
-    bool isDisplayable() const { return m_type == Type::Geometry || m_type == Type::Backdrop; }
+    bool isDisplayable() const {
+        return m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer;
+    }
 
     TransformNode *toTransform();
     GeometryNode *toGeometry();
     BackdropNode *toBackdrop();
+    RendererNode *toRenderer();
     const TransformNode *toTransform() const;
     const GeometryNode *toGeometry() const;
     const BackdropNode *toBackdrop() const;
+    const RendererNode *toRenderer() const;
 
     void setName(const QString &name) { m_name = name; }
     QString name() const { return m_name; }
-
     quint64 id() const { return m_id; }
 
     bool isVisible() const { return m_visible; }
@@ -242,6 +257,25 @@ private:
     friend class Tracker;
     QMargins m_expansion;
     bool m_clipExpansion = true;
+};
+
+// Displayable node that executes a custom damage calculation function.
+// When reached during damage propagation, it inspects the accumulated overall
+// damage and render matrices to compute the damage region it will induce.
+class RendererNode : public GeometryNode
+{
+public:
+    using DamageFunction = std::function<QRegion(const RenderContext &context)>;
+
+    RendererNode();
+
+    void setDamageFunction(DamageFunction func);
+    DamageFunction damageFunction() const { return m_damageFunc; }
+
+private:
+    friend class Node;
+    friend class Tracker;
+    DamageFunction m_damageFunc;
 };
 
 } // namespace Gdt

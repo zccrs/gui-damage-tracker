@@ -70,6 +70,7 @@ public:
     Q_INVOKABLE void addTransform();
     Q_INVOKABLE void addGeometry();
     Q_INVOKABLE void addBackdrop();
+    Q_INVOKABLE void addRenderer();
     Q_INVOKABLE void removeSelected();
     Q_INVOKABLE void raiseSelected();
     Q_INVOKABLE void lowerSelected();

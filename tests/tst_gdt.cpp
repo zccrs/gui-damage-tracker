@@ -111,6 +111,9 @@ private slots:
     void twoViewportsDropped();
     void twoViewportsNewOutputFullDamage();
     void nodeAccessorsFollowPrimaryViewport();
+    void rendererNodeBasicDamageFunction();
+    void rendererNodeDynamicInducedDamage();
+    void rendererNodeMatrixPropagation();
 };
 
 void tst_Gdt::emptyCommit()
@@ -1374,6 +1377,101 @@ void tst_Gdt::nodeAccessorsFollowPrimaryViewport()
     QVERIFY(!tracker.isCulled(1, g));
     QVERIFY(!tracker.isFullyOccluded(1, g));
     CONTAINS_REGION(tracker.visibleDamage(1, g), QRegion(0, 0, 10, 10));
+}
+
+void tst_Gdt::rendererNodeBasicDamageFunction()
+{
+    Node root;
+    auto *rnd = new RendererNode;
+    rnd->setBoundingRect(QRectF(10, 20, 100, 80));
+
+    bool called = false;
+    QRectF capturedBoundingRect;
+    QRect capturedWorldBounds;
+    rnd->setDamageFunction([&](const RenderContext &ctx) -> QRegion {
+        called = true;
+        capturedBoundingRect = ctx.boundingRect;
+        capturedWorldBounds = ctx.worldBounds;
+        // Return extra 10px margin around worldBounds as custom damage
+        return ctx.worldBounds.adjusted(-10, -10, 10, 10);
+    });
+
+    root.appendChild(rnd);
+    Tracker tracker(&root);
+
+    // First commit: node appearing (ownDamage: 10,20,100,80) + inducedDamage: 0,10,120,100
+    const QRegion damage = tracker.commit();
+    QVERIFY(called);
+    QCOMPARE(capturedBoundingRect, QRectF(10, 20, 100, 80));
+    QCOMPARE(capturedWorldBounds, QRect(10, 20, 100, 80));
+    COMPARE_REGION(damage, QRegion(0, 10, 120, 100));
+    COMPARE_REGION(rnd->inducedDamage(), QRegion(0, 10, 120, 100));
+}
+void tst_Gdt::rendererNodeDynamicInducedDamage()
+{
+    Node root;
+    auto *bg = new GeometryNode;
+    bg->setBoundingRect(QRectF(0, 0, 50, 50));
+    root.appendChild(bg);
+
+    auto *rnd = new RendererNode;
+    rnd->setBoundingRect(QRectF(20, 20, 100, 100));
+
+    QRegion receivedOverall;
+    rnd->setDamageFunction([&receivedOverall](const RenderContext &ctx) -> QRegion {
+        receivedOverall = ctx.overallDamage;
+        if (ctx.overallDamage.intersects(ctx.worldBounds)) {
+            // If background changed inside our bounds, induce full node repaint
+            return ctx.worldBounds;
+        }
+        return {};
+    });
+    root.appendChild(rnd);
+
+    Tracker tracker(&root);
+    tracker.commit(); // initial commit
+
+    // Now bg changes content in intersecting area (30,30,10,10)
+    bg->markContentDirty(QRect(30, 30, 10, 10));
+    const QRegion damage = tracker.commit();
+
+    // rnd should have seen the background damage in its overallDamage context
+    CONTAINS_REGION(receivedOverall, QRegion(30, 30, 10, 10));
+    // And rnd should have induced its full 100x100 bounds
+    CONTAINS_REGION(damage, QRegion(20, 20, 100, 100));
+}
+
+void tst_Gdt::rendererNodeMatrixPropagation()
+{
+    Node root;
+    auto *trans = new TransformNode;
+    QTransform t;
+    t.translate(50, 30);
+    t.scale(2.0, 2.0);
+    trans->setMatrix(t);
+    root.appendChild(trans);
+
+    auto *rnd = new RendererNode;
+    rnd->setBoundingRect(QRectF(10, 10, 20, 20));
+
+    QTransform capturedWorldTransform;
+    QTransform capturedRenderMatrix;
+    rnd->setDamageFunction([&](const RenderContext &ctx) -> QRegion {
+        capturedWorldTransform = ctx.worldTransform;
+        capturedRenderMatrix = ctx.renderMatrix;
+        return ctx.worldBounds;
+    });
+    trans->appendChild(rnd);
+
+    Tracker tracker(&root);
+    tracker.commit();
+
+    // local (10,10,20,20) * scale(2,2) + translate(50,30) => (70, 50, 40, 40)
+    QCOMPARE(rnd->worldBounds(), QRect(70, 50, 40, 40));
+    QCOMPARE(capturedWorldTransform.dx(), 50.0);
+    QCOMPARE(capturedWorldTransform.dy(), 30.0);
+    QCOMPARE(capturedWorldTransform.m11(), 2.0);
+    QCOMPARE(capturedWorldTransform.m22(), 2.0);
 }
 
 QTEST_MAIN(tst_Gdt)

@@ -17,6 +17,8 @@ static QString typeName(Node::Type t)
         return QStringLiteral("Geometry");
     case Node::Type::Backdrop:
         return QStringLiteral("Backdrop");
+    case Node::Type::Renderer:
+        return QStringLiteral("Renderer");
     }
     return QStringLiteral("?");
 }
@@ -46,7 +48,7 @@ TransformNode *Node::toTransform()
 
 GeometryNode *Node::toGeometry()
 {
-    return (m_type == Type::Geometry || m_type == Type::Backdrop)
+    return (m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer)
         ? static_cast<GeometryNode *>(this)
         : nullptr;
 }
@@ -56,6 +58,11 @@ BackdropNode *Node::toBackdrop()
     return m_type == Type::Backdrop ? static_cast<BackdropNode *>(this) : nullptr;
 }
 
+RendererNode *Node::toRenderer()
+{
+    return m_type == Type::Renderer ? static_cast<RendererNode *>(this) : nullptr;
+}
+
 const TransformNode *Node::toTransform() const
 {
     return m_type == Type::Transform ? static_cast<const TransformNode *>(this) : nullptr;
@@ -63,7 +70,7 @@ const TransformNode *Node::toTransform() const
 
 const GeometryNode *Node::toGeometry() const
 {
-    return (m_type == Type::Geometry || m_type == Type::Backdrop)
+    return (m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer)
         ? static_cast<const GeometryNode *>(this)
         : nullptr;
 }
@@ -71,6 +78,11 @@ const GeometryNode *Node::toGeometry() const
 const BackdropNode *Node::toBackdrop() const
 {
     return m_type == Type::Backdrop ? static_cast<const BackdropNode *>(this) : nullptr;
+}
+
+const RendererNode *Node::toRenderer() const
+{
+    return m_type == Type::Renderer ? static_cast<const RendererNode *>(this) : nullptr;
 }
 
 void Node::setVisible(bool visible)
@@ -298,8 +310,24 @@ void Node::collectBackdrop(QRegion &acc)
         else
             m_inducedDamage &= m_worldBounds.marginsAdded(bg->m_expansion);
         acc += m_inducedDamage;
-    }
+    } else if (m_type == Type::Renderer) {
+        auto *rnd = static_cast<RendererNode *>(this);
+        if (rnd->m_damageFunc) {
+            RenderContext ctx;
+            ctx.viewportId = 0;
+            ctx.overallDamage = acc;
+            ctx.worldTransform = m_worldTransform;
+            ctx.renderMatrix = m_worldTransform;
+            ctx.boundingRect = rnd->boundingRect();
+            ctx.worldBounds = m_worldBounds;
+            ctx.outputBounds = m_worldBounds;
+            ctx.node = rnd;
 
+            const QRegion customDamage = rnd->m_damageFunc(ctx);
+            m_inducedDamage = customDamage;
+            acc += customDamage;
+        }
+    }
     acc += m_ownDamage;
 
     for (Node *child = m_firstChild; child; child = child->m_next)
@@ -707,6 +735,17 @@ void BackdropNode::setClipExpansion(bool clip)
         return;
     m_clipExpansion = clip;
     markDirty(DirtyGeometry);
+}
+
+RendererNode::RendererNode()
+    : GeometryNode(Type::Renderer)
+{
+}
+
+void RendererNode::setDamageFunction(DamageFunction func)
+{
+    m_damageFunc = std::move(func);
+    markDirty(DirtyContent);
 }
 
 } // namespace Gdt
