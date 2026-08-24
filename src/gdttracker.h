@@ -44,6 +44,16 @@ struct Viewport {
     void clearNodeData();
 };
 
+// Per-viewport mutable occlusion state during merged multi-viewport traversal.
+struct ViewportOcclusionState {
+    QRegion frontOpaque;
+    QRegion remaining;
+    QRegion exposed;
+    QRegion screen;
+    Viewport *viewport = nullptr;
+    bool skipped = false;
+};
+
 // Mutations only mark dirty bits. commit() runs the region math.
 class Tracker
 {
@@ -59,8 +69,10 @@ public:
     // Primary commit: stateless, populates each Viewport::state in-place
     void commit(QVector<Viewport> &viewports);
 
+
 private:
     void computeViewport(Viewport &viewport, const QRegion &worldDamage);
+    void computeAllViewports(QVector<Viewport> &viewports, const QRegion &worldDamage);
 
     Node *m_root = nullptr;
 };

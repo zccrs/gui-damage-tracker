@@ -1,7 +1,7 @@
 #include "gdtnode.h"
+#include "gdttracker.h"
 
 #include <QMatrix4x4>
-
 namespace Gdt {
 
 quint64 Node::s_nextId = 1;
@@ -615,6 +615,222 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     } else {
         if (!visibleLocalDamage.isEmpty())
             exposed += visibleLocalDamage;
+    }
+}
+
+void Node::applyOcclusionMulti(ViewportOcclusionState *states, int count,
+                                const QRegion &worldDamage,
+                                const std::function<NodeViewportData *(Node *, Viewport *)> &dataFactory)
+{
+    if (!m_visible) {
+        if (hasContent()) {
+            for (int i = 0; i < count; ++i) {
+                auto &vps = states[i];
+                NodeViewportData *view = dataFactory(this, vps.viewport);
+                view->viewport = vps.viewport;
+                view->culled = true;
+                view->fullyOccluded = false;
+                view->occludedRegion = {};
+                view->visibleDamage = {};
+            }
+        }
+        return;
+    }
+
+    // Subtree AABB culling per viewport: skip off-screen subtrees for that viewport only.
+    // The child recursion still happens once — each viewport's remaining/visible state
+    // is preserved because applyOcclusion for that viewport was skipped.
+    for (int i = 0; i < count; ++i) {
+        auto &vps = states[i];
+        const auto &vp = *vps.viewport;
+        if (!vp.outputRect.isEmpty() && !m_subtreeAABB.isEmpty()) {
+            const QRect outputSubtreeAABB = mapOuter(vp.worldToOutput, QRectF(m_subtreeAABB));
+            if (!outputSubtreeAABB.intersects(vp.outputRect)) {
+                // Mark all content nodes in this subtree as culled for this viewport
+                if (hasContent()) {
+                    NodeViewportData *view = dataFactory(this, vps.viewport);
+                    view->viewport = vps.viewport;
+                    view->culled = true;
+                    view->fullyOccluded = false;
+                    view->occludedRegion = {};
+                    view->visibleDamage = {};
+                }
+                vps.skipped = true;
+            }
+        }
+    }
+
+    // Recurse children ONCE (not per viewport)
+    for (Node *child = m_lastChild; child; child = child->m_prev) {
+        // Save/restore per-viewport state so each child sees the parent's accumulated frontOpaque
+        child->applyOcclusionMulti(states, count, worldDamage, dataFactory);
+    }
+
+    // Per-viewport occlusion math for THIS node
+    const bool hasDamage = !m_ownDamage.isEmpty() || !m_inducedDamage.isEmpty();
+    QRegion worldLocalDamage;
+    if (hasDamage) {
+        if (m_inducedDamage.isEmpty())
+            worldLocalDamage = m_ownDamage;
+        else if (m_ownDamage.isEmpty())
+            worldLocalDamage = m_inducedDamage;
+        else
+            worldLocalDamage = m_ownDamage + m_inducedDamage;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        auto &vps = states[i];
+        if (vps.skipped) {
+            vps.skipped = false;
+            continue;
+        }
+        const auto &vp = *vps.viewport;
+
+        const bool usableTransform = vp.worldToOutput.isAffine() && vp.worldToOutput.isInvertible();
+
+        QRegion localDamage;
+        if (hasDamage) {
+            if (usableTransform) {
+                localDamage = mapRegionOuter(vp.worldToOutput, worldLocalDamage);
+            } else if (!vp.outputRect.isEmpty()) {
+                localDamage = QRegion(vp.outputRect);
+            } else {
+                localDamage = mapRegionOuter(vp.worldToOutput, worldLocalDamage);
+            }
+            if (!vp.outputRect.isEmpty())
+                localDamage &= vp.outputRect;
+        }
+
+        if (!hasContent()) {
+            if (!localDamage.isEmpty())
+                vps.screen += localDamage;
+            continue;
+        }
+
+        // Fast path: damage-free, non-opaque, non-exposed
+        if (!hasDamage && m_worldOpaque.isEmpty() && vps.exposed.isEmpty()) {
+            QRect boundsRect;
+            if (usableTransform)
+                boundsRect = mapOuter(vp.worldToOutput, QRectF(m_worldBounds));
+            else if (!vp.outputRect.isEmpty())
+                boundsRect = vp.outputRect;
+            else
+                boundsRect = mapOuter(vp.worldToOutput, QRectF(m_worldBounds));
+            if (!vp.outputRect.isEmpty())
+                boundsRect &= vp.outputRect;
+
+            NodeViewportData *view = dataFactory(this, vps.viewport);
+            view->viewport = vps.viewport;
+            view->visibleDamage = {};
+            if (boundsRect.isEmpty()) {
+                view->culled = true;
+                view->fullyOccluded = false;
+                view->occludedRegion = {};
+            } else if (!vps.frontOpaque.isEmpty()) {
+                if (vps.frontOpaque.contains(boundsRect)) {
+                    view->fullyOccluded = true;
+                    view->culled = true;
+                    view->occludedRegion = QRegion(boundsRect);
+                } else {
+                    view->fullyOccluded = false;
+                    view->culled = false;
+                    const QRect frontAABB = vps.frontOpaque.boundingRect();
+                    if (frontAABB.intersects(boundsRect))
+                        view->occludedRegion = vps.frontOpaque & boundsRect;
+                    else
+                        view->occludedRegion = {};
+                }
+            } else {
+                view->culled = false;
+                view->fullyOccluded = false;
+                view->occludedRegion = {};
+            }
+            continue;
+        }
+
+        QRegion boundsReg;
+        if (usableTransform)
+            boundsReg = QRegion(mapOuter(vp.worldToOutput, QRectF(m_worldBounds)));
+        else if (!vp.outputRect.isEmpty())
+            boundsReg = QRegion(vp.outputRect);
+        else
+            boundsReg = QRegion(mapOuter(vp.worldToOutput, QRectF(m_worldBounds)));
+        if (!vp.outputRect.isEmpty())
+            boundsReg &= vp.outputRect;
+
+        QRegion opaque;
+        if (!m_worldOpaque.isEmpty()) {
+            if (usableTransform)
+                opaque = mapRegionInner(vp.worldToOutput, m_worldOpaque);
+            if (!vp.outputRect.isEmpty())
+                opaque &= vp.outputRect;
+        }
+
+        QRegion visibleLocalDamage;
+        QRegion nonOccludedBounds;
+        NodeViewportData *view = dataFactory(this, vps.viewport);
+        view->viewport = vps.viewport;
+
+        if (vps.frontOpaque.isEmpty()) {
+            view->occludedRegion = {};
+            view->fullyOccluded = false;
+            view->culled = boundsReg.isEmpty();
+            nonOccludedBounds = boundsReg;
+            visibleLocalDamage = localDamage;
+        } else {
+            const QRect frontAABB = vps.frontOpaque.boundingRect();
+            const QRect nodeAABB = boundsReg.boundingRect();
+
+            if (!frontAABB.intersects(nodeAABB)) {
+                view->occludedRegion = {};
+                view->fullyOccluded = false;
+                view->culled = boundsReg.isEmpty();
+                nonOccludedBounds = boundsReg;
+                visibleLocalDamage = localDamage;
+            } else {
+                view->occludedRegion = boundsReg & vps.frontOpaque;
+                nonOccludedBounds = boundsReg - vps.frontOpaque;
+                view->fullyOccluded = !boundsReg.isEmpty() && nonOccludedBounds.isEmpty();
+                view->culled = boundsReg.isEmpty() || view->fullyOccluded;
+                visibleLocalDamage = localDamage.isEmpty() ? QRegion() : (localDamage - vps.frontOpaque);
+            }
+        }
+
+        if (vps.exposed.isEmpty()) {
+            if (!visibleLocalDamage.isEmpty())
+                view->visibleDamage = visibleLocalDamage & boundsReg;
+            else
+                view->visibleDamage = {};
+        } else {
+            if (!nonOccludedBounds.isEmpty())
+                view->visibleDamage = vps.exposed & nonOccludedBounds;
+            else
+                view->visibleDamage = {};
+            if (!visibleLocalDamage.isEmpty())
+                view->visibleDamage += visibleLocalDamage & boundsReg;
+        }
+
+        if (!visibleLocalDamage.isEmpty())
+            vps.screen += visibleLocalDamage;
+
+        if (!opaque.isEmpty()) {
+            if (!vps.remaining.isEmpty())
+                vps.remaining -= opaque;
+            if (!vps.exposed.isEmpty())
+                vps.exposed -= opaque;
+            if (!visibleLocalDamage.isEmpty()) {
+                const QRect opaqueAABB = opaque.boundingRect();
+                const QRect damageAABB = visibleLocalDamage.boundingRect();
+                if (opaqueAABB.intersects(damageAABB))
+                    vps.exposed += visibleLocalDamage - opaque;
+                else
+                    vps.exposed += visibleLocalDamage;
+            }
+            vps.frontOpaque += opaque;
+        } else {
+            if (!visibleLocalDamage.isEmpty())
+                vps.exposed += visibleLocalDamage;
+        }
     }
 }
 

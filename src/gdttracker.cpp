@@ -173,6 +173,49 @@ void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
     vp.state.damage = screen;
 }
 
+void Tracker::computeAllViewports(QVector<Viewport> &viewports, const QRegion &worldDamage)
+{
+    std::vector<ViewportOcclusionState> states(viewports.size());
+
+    for (int i = 0; i < viewports.size(); ++i) {
+        Viewport &vp = viewports[i];
+        const bool usableTransform = vp.worldToOutput.isAffine()
+            && vp.worldToOutput.isInvertible();
+
+        QRegion remaining;
+        if (!usableTransform && !vp.outputRect.isEmpty()
+            && (!worldDamage.isEmpty() || !vp.damage.isEmpty())) {
+            remaining = QRegion(vp.outputRect);
+        } else {
+            remaining = mapRegionOuter(vp.worldToOutput, worldDamage);
+            if (!vp.damage.isEmpty())
+                remaining += vp.damage;
+        }
+        if (!vp.outputRect.isEmpty())
+            remaining &= vp.outputRect;
+
+        vp.clearNodeData();
+        states[i].remaining = std::move(remaining);
+        states[i].viewport = &vp;
+    }
+
+    auto factory = [](Node *n, Viewport *vp) -> NodeViewportData * {
+        return vp->getOrCreateNodeData(n);
+    };
+
+    if (m_root) {
+        m_root->applyOcclusionMulti(states.data(), viewports.size(), worldDamage, factory);
+    }
+
+    for (int i = 0; i < viewports.size(); ++i) {
+        Viewport &vp = viewports[i];
+        QRegion remaining = std::move(states[i].remaining);
+        if (!vp.outputRect.isEmpty())
+            remaining &= vp.outputRect;
+        vp.state.damage = states[i].screen + remaining;
+    }
+}
+
 
 void Tracker::commit(QVector<Viewport> &viewports)
 {
@@ -208,9 +251,8 @@ void Tracker::commit(QVector<Viewport> &viewports)
     QRegion worldDamage;
     m_root->collectBackdrop(worldDamage);
 
-    for (Viewport &in : viewports) {
+    for (Viewport &in : viewports)
         computeViewport(in, worldDamage);
-    }
 
     if (treeDirty)
         m_root->commitState();

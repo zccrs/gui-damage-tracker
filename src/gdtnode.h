@@ -16,6 +16,7 @@ namespace Gdt {
 class Node;
 class Tracker;
 struct Viewport;
+struct ViewportOcclusionState;
 class TransformNode;
 class GeometryNode;
 class BackdropNode;
@@ -154,6 +155,9 @@ private:
                         QRegion &screen, const QTransform &worldToOutput,
                         const QRect &outputRect, const Viewport *viewport,
                         const std::function<NodeViewportData *(Node *)> &dataFactory);
+    void applyOcclusionMulti(ViewportOcclusionState *states, int count,
+                             const QRegion &worldDamage,
+                             const std::function<NodeViewportData *(Node *, Viewport *)> &dataFactory);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
 
