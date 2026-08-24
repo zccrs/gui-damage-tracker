@@ -2,6 +2,8 @@
 #include "gdttracker.h"
 
 #include <QMatrix4x4>
+
+#include <QtCore/qglobal.h>
 namespace Gdt {
 
 quint64 Node::s_nextId = 1;
@@ -90,7 +92,7 @@ const RendererNode *Node::toRenderer() const
 
 const NodeViewportData *Node::viewportData(const Viewport *viewport) const
 {
-    if (!viewport)
+    if (Q_UNLIKELY(!viewport))
         return m_viewportDataHead;
     for (const NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
         if (curr->viewport == viewport)
@@ -101,7 +103,7 @@ const NodeViewportData *Node::viewportData(const Viewport *viewport) const
 
 NodeViewportData *Node::viewportData(const Viewport *viewport)
 {
-    if (!viewport)
+    if (Q_UNLIKELY(!viewport))
         return m_viewportDataHead;
     for (NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
         if (curr->viewport == viewport)
@@ -324,7 +326,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
     const bool matrixChanged = parentWorldChanged
         || (m_type == Type::Transform && (m_dirty & DirtyMatrix));
 
-    if (!matrixChanged && m_dirty == 0) {
+    if (Q_UNLIKELY(!matrixChanged && m_dirty == 0)) {
         clearFrameDamageRecursive();
         return;
     }
@@ -334,7 +336,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
     else
         m_worldTransform = parentWorld;
 
-    if (!m_visible) {
+    if (Q_UNLIKELY(!m_visible)) {
         if (m_committedVisible)
             m_ownDamage += m_committedSubtreeAABB;
         m_worldBounds = {};
@@ -385,12 +387,12 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
 
 void Node::collectBackdrop(QRegion &acc)
 {
-    if (!m_visible) {
+    if (Q_UNLIKELY(!m_visible)) {
         acc += m_ownDamage;
         return;
     }
 
-    if (m_type == Type::Backdrop) {
+    if (Q_UNLIKELY(m_type == Type::Backdrop)) {
         auto *bg = static_cast<BackdropNode *>(this);
         const QRect sample = m_worldBounds.marginsAdded(bg->m_expansion);
         QRegion relevant = acc;
@@ -401,7 +403,7 @@ void Node::collectBackdrop(QRegion &acc)
         else
             m_inducedDamage &= m_worldBounds.marginsAdded(bg->m_expansion);
         acc += m_inducedDamage;
-    } else if (m_type == Type::Renderer) {
+    } else if (Q_UNLIKELY(m_type == Type::Renderer)) {
         auto *rnd = static_cast<RendererNode *>(this);
         if (rnd->m_damageFunc) {
             RenderContext ctx;
@@ -430,7 +432,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                           const QRect &outputRect, const Viewport *viewport,
                           const std::function<NodeViewportData *(Node *)> &dataFactory)
 {
-    if (!m_visible) {
+    if (Q_UNLIKELY(!m_visible)) {
         if (hasContent()) {
             NodeViewportData *view = dataFactory(this);
             view->viewport = viewport;
@@ -443,9 +445,9 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     }
 
     // Subtree AABB culling: skip entire off-screen subtrees.
-    if (!outputRect.isEmpty() && !m_subtreeAABB.isEmpty()) {
+    if (Q_LIKELY(!outputRect.isEmpty()) && Q_LIKELY(!m_subtreeAABB.isEmpty())) {
         const QRect outputSubtreeAABB = mapOuter(worldToOutput, QRectF(m_subtreeAABB));
-        if (!outputSubtreeAABB.intersects(outputRect))
+        if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect)))
             return;
     }
 
@@ -454,13 +456,13 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                               worldToOutput, outputRect, viewport, dataFactory);
     }
 
-    const bool usableTransform = worldToOutput.isAffine() && worldToOutput.isInvertible();
-    const bool hasDamage = !m_ownDamage.isEmpty() || !m_inducedDamage.isEmpty();
+    const bool usableTransform = Q_LIKELY(worldToOutput.isAffine() && worldToOutput.isInvertible());
+    const bool hasDamage = Q_UNLIKELY(!m_ownDamage.isEmpty() || !m_inducedDamage.isEmpty());
 
     // Map damage to output coordinates. When only one source is non-empty,
     // map it directly — avoids a QRegion::united() allocation.
     QRegion localDamage;
-    if (hasDamage) {
+    if (Q_UNLIKELY(hasDamage)) {
         QRegion worldLocalDamage;
         if (m_inducedDamage.isEmpty())
             worldLocalDamage = m_ownDamage;       // COW copy, no alloc
@@ -480,7 +482,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             localDamage &= outputRect;
     }
 
-    if (!hasContent()) {
+    if (Q_UNLIKELY(!hasContent())) {
         if (!localDamage.isEmpty())
             screen += localDamage;
         return;
@@ -490,7 +492,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     // No contribution to screen/remaining/exposed/frontOpaque — only need
     // culled/fullyOccluded/occludedRegion for the view. Uses QRect when the
     // front-opaque AABB doesn't intersect (avoids QRegion heap ops).
-    if (!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty()) {
+    if (Q_LIKELY(!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty())) {
         QRect boundsRect;
         if (usableTransform)
             boundsRect = mapOuter(worldToOutput, QRectF(m_worldBounds));
@@ -505,11 +507,11 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         view->viewport = viewport;
         view->outputBounds = boundsRect;
         view->visibleDamage = {};
-        if (boundsRect.isEmpty()) {
+            if (Q_UNLIKELY(boundsRect.isEmpty())) {
             view->culled = true;
             view->fullyOccluded = false;
             view->occludedRegion = {};
-        } else if (!frontOpaque.isEmpty()) {
+            } else if (Q_UNLIKELY(!frontOpaque.isEmpty())) {
             // Check full occlusion with QRect API — avoids QRegion subtraction.
             if (frontOpaque.contains(boundsRect)) {
                 view->fullyOccluded = true;
@@ -544,7 +546,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         boundsReg &= outputRect;
 
     QRegion opaque;
-    if (!m_worldOpaque.isEmpty()) {
+    if (Q_UNLIKELY(!m_worldOpaque.isEmpty())) {
         if (usableTransform)
             opaque = mapRegionInner(worldToOutput, m_worldOpaque);
         if (!outputRect.isEmpty())
@@ -556,7 +558,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     NodeViewportData *view = dataFactory(this);
     view->viewport = viewport;
     view->outputBounds = boundsReg.boundingRect();
-    if (frontOpaque.isEmpty()) {
+    if (Q_LIKELY(frontOpaque.isEmpty())) {
         view->occludedRegion = {};
         view->fullyOccluded = false;
         view->culled = boundsReg.isEmpty();
@@ -566,7 +568,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         const QRect frontAABB = frontOpaque.boundingRect();
         const QRect nodeAABB = boundsReg.boundingRect();
 
-        if (!frontAABB.intersects(nodeAABB)) {
+        if (Q_LIKELY(!frontAABB.intersects(nodeAABB))) {
             view->occludedRegion = {};
             view->fullyOccluded = false;
             view->culled = boundsReg.isEmpty();
@@ -581,7 +583,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         }
     }
 
-    if (exposed.isEmpty()) {
+    if (Q_LIKELY(exposed.isEmpty())) {
         if (!visibleLocalDamage.isEmpty())
             view->visibleDamage = visibleLocalDamage & boundsReg;
         else
@@ -595,26 +597,26 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             view->visibleDamage += visibleLocalDamage & boundsReg;
     }
 
-    if (!visibleLocalDamage.isEmpty())
+    if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
         screen += visibleLocalDamage;
 
-    if (!opaque.isEmpty()) {
-        if (!remaining.isEmpty())
+    if (Q_UNLIKELY(!opaque.isEmpty())) {
+        if (Q_LIKELY(!remaining.isEmpty()))
             remaining -= opaque;
-        if (!exposed.isEmpty())
+        if (Q_UNLIKELY(!exposed.isEmpty()))
             exposed -= opaque;
-        if (!visibleLocalDamage.isEmpty()) {
+        if (Q_UNLIKELY(!visibleLocalDamage.isEmpty())) {
             // Short-circuit: if AABBs don't intersect, subtraction is a no-op.
             const QRect opaqueAABB = opaque.boundingRect();
             const QRect damageAABB = visibleLocalDamage.boundingRect();
-            if (opaqueAABB.intersects(damageAABB))
+            if (Q_LIKELY(!opaqueAABB.intersects(damageAABB)))
                 exposed += visibleLocalDamage - opaque;
             else
                 exposed += visibleLocalDamage;
         }
         frontOpaque += opaque;
     } else {
-        if (!visibleLocalDamage.isEmpty())
+        if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
             exposed += visibleLocalDamage;
     }
 }

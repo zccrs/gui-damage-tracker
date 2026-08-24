@@ -218,7 +218,7 @@ void Tracker::computeAllViewports(QVector<Viewport> &viewports, const QRegion &w
 
 void Tracker::commit(QVector<Viewport> &viewports)
 {
-    if (!m_root) {
+    if (Q_UNLIKELY(!m_root)) {
         for (Viewport &vp : viewports) {
             vp.state.damage = {};
             vp.clearNodeData();
@@ -229,13 +229,13 @@ void Tracker::commit(QVector<Viewport> &viewports)
     // 单次遍历: 检测视口脏区 + 逆映射合并到世界空间
     QRegion viewportWorldDamage;
     for (const Viewport &vp : std::as_const(viewports)) {
-        if (!vp.damage.isEmpty())
+        if (Q_UNLIKELY(!vp.damage.isEmpty()))
             viewportWorldDamage += mapRegionOuter(vp.worldToOutput.inverted(), vp.damage);
     }
     const bool hasViewportDamage = !viewportWorldDamage.isEmpty();
 
     const bool treeDirty = m_root->isDirty();
-    if (!treeDirty && !hasViewportDamage) {
+    if (Q_LIKELY(!treeDirty && !hasViewportDamage)) {
         for (Viewport &in : viewports)
             in.state.damage = {};
         return;
