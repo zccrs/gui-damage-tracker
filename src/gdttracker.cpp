@@ -215,6 +215,61 @@ void Tracker::computeAllViewports(QVector<Viewport> &viewports, const QRegion &w
     }
 }
 
+void Tracker::prepareFrame()
+{
+    m_worldDamage = {};
+
+    if (Q_UNLIKELY(!m_root))
+        return;
+
+    const bool treeDirty = m_root->isDirty();
+    if (Q_LIKELY(!treeDirty))
+        return; // idle frame, nothing to do
+
+    m_root->updateWorld(QTransform(), false);
+
+    // collectBackdrop: world-space damage accumulation (no viewport damage)
+    // Viewport swapchain damage is handled per-viewport in renderViewport.
+    m_root->collectBackdrop(m_worldDamage);
+}
+
+void Tracker::renderViewport(Viewport &vp)
+{
+    if (Q_UNLIKELY(!m_root)) {
+        vp.state.damage = {};
+        vp.clearNodeData();
+        return;
+    }
+
+    const bool treeDirty = m_root->isDirty();
+    if (Q_LIKELY(!treeDirty && vp.damage.isEmpty())) {
+        vp.state.damage = {};
+        return;
+    }
+
+    // If tree wasn't dirty but viewport has swapchain damage, we still need
+    // to clear per-frame damage (updateWorld wasn't called in prepareFrame)
+    if (Q_LIKELY(!treeDirty))
+        m_root->clearFrameDamageRecursive();
+
+    // Merge viewport swapchain damage into the per-viewport computation
+    QRegion worldDamage = m_worldDamage;
+    if (Q_UNLIKELY(!vp.damage.isEmpty())) {
+        const QTransform inverse = vp.worldToOutput.inverted();
+        worldDamage += mapRegionOuter(inverse, vp.damage);
+    }
+
+    computeViewport(vp, worldDamage);
+}
+
+void Tracker::finishFrame()
+{
+    if (Q_UNLIKELY(!m_root))
+        return;
+
+    if (m_root->isDirty())
+        m_root->commitState();
+}
 
 void Tracker::commit(QVector<Viewport> &viewports)
 {
@@ -226,13 +281,13 @@ void Tracker::commit(QVector<Viewport> &viewports)
         return;
     }
 
-    // 单次遍历: 检测视口脏区 + 逆映射合并到世界空间
-    QRegion viewportWorldDamage;
+    bool hasViewportDamage = false;
     for (const Viewport &vp : std::as_const(viewports)) {
-        if (Q_UNLIKELY(!vp.damage.isEmpty()))
-            viewportWorldDamage += mapRegionOuter(vp.worldToOutput.inverted(), vp.damage);
+        if (Q_UNLIKELY(!vp.damage.isEmpty())) {
+            hasViewportDamage = true;
+            break;
+        }
     }
-    const bool hasViewportDamage = !viewportWorldDamage.isEmpty();
 
     const bool treeDirty = m_root->isDirty();
     if (Q_LIKELY(!treeDirty && !hasViewportDamage)) {
@@ -241,21 +296,19 @@ void Tracker::commit(QVector<Viewport> &viewports)
         return;
     }
 
-    if (treeDirty)
-        m_root->updateWorld(QTransform(), false);
-    else
+    // Phase 1: shared
+    prepareFrame();
+
+    // If tree was clean but viewport has damage, we need clearFrameDamage
+    if (Q_LIKELY(!treeDirty))
         m_root->clearFrameDamageRecursive();
 
-    // collectBackdrop 使用包含视口脏区的累加器，BackdropNode 能感知并扩散
-    QRegion worldDamageWithViewport = viewportWorldDamage;
-    m_root->collectBackdrop(worldDamageWithViewport);
-
-    // 场景图本身的 damage（不含视口脏区，避免跨视口泄漏）
-    QRegion worldDamage = worldDamageWithViewport - viewportWorldDamage;
+    // Phase 2: per-viewport
     for (Viewport &in : viewports)
-        computeViewport(in, worldDamage);
-    if (treeDirty)
-        m_root->commitState();
+        renderViewport(in);
+
+    // Phase 3: shared
+    finishFrame();
 }
 
 } // namespace Gdt

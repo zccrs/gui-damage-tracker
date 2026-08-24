@@ -54,7 +54,7 @@ struct ViewportOcclusionState {
     bool skipped = false;
 };
 
-// Mutations only mark dirty bits. commit() runs the region math.
+// Tracker runs region math. Three-phase API enables per-viewport async rendering.
 class Tracker
 {
 public:
@@ -66,15 +66,33 @@ public:
     void setRoot(Node *root);
     Node *root() const { return m_root; }
 
-    // Primary commit: stateless, populates each Viewport::state in-place
+    // Legacy: one-shot commit for all viewports (calls prepare/render/finish)
     void commit(QVector<Viewport> &viewports);
+
+    // Phase 1: shared world-space computation (updateWorld + collectBackdrop)
+    // Run once per frame, shared by all viewports on the same tree.
+    void prepareFrame();
+
+    // Phase 2: per-viewport occlusion culling (applyOcclusion)
+    // Run independently per viewport, supports different refresh rates.
+    // Swapchain buffer damage is merged here, not in collectBackdrop.
+    void renderViewport(Viewport &vp);
+
+    // Phase 3: shared state commit (commitState)
+    // Run once after all viewports have finished rendering.
+    void finishFrame();
+
+    // Access the world damage computed in prepareFrame (for debugging/testing)
+    QRegion worldDamage() const { return m_worldDamage; }
 
 private:
     void computeViewport(Viewport &viewport, const QRegion &worldDamage);
     void computeAllViewports(QVector<Viewport> &viewports, const QRegion &worldDamage);
 
     Node *m_root = nullptr;
+    QRegion m_worldDamage;
 };
+
 } // namespace Gdt
 
 #endif // GDTTRACKER_H

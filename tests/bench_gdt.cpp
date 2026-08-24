@@ -117,14 +117,21 @@ static BenchmarkResult runBenchmark(const QString &category, const QString &scen
     Tracker tracker(root.get());
 
     auto viewports = createViewports(viewportCount);
-    tracker.commit(viewports); // warm-up & initial commit
+    // warm-up & initial commit (three-phase)
+    tracker.prepareFrame();
+    for (auto &vp : viewports)
+        tracker.renderViewport(vp);
+    tracker.finishFrame();
 
     QElapsedTimer timer;
     timer.start();
 
     for (int i = 0; i < iterations; ++i) {
         prepareIteration(tracker, root.get(), geos, transforms, backdrops, i);
-        tracker.commit(viewports);
+        tracker.prepareFrame();
+        for (auto &vp : viewports)
+            tracker.renderViewport(vp);
+        tracker.finishFrame();
     }
 
     const qint64 elapsedNs = timer.nsecsElapsed();
