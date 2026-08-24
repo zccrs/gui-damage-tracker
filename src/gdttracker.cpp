@@ -49,7 +49,7 @@ Tracker::Viewport::Viewport(Viewport &&other) noexcept
     , nodeDataPool(std::move(other.nodeDataPool))
 {
     state.viewport = this;
-    for (const auto &item : nodeDataPool) {
+    for (const auto &item : std::as_const(nodeDataPool)) {
         if (item && item->node) {
             item->viewport = this;
             item->node->attachViewportData(item.get());
@@ -66,8 +66,7 @@ Tracker::Viewport &Tracker::Viewport::operator=(Viewport &&other) noexcept
         damage = std::move(other.damage);
         state = std::move(other.state);
         state.viewport = this;
-        nodeDataPool = std::move(other.nodeDataPool);
-        for (const auto &item : nodeDataPool) {
+        for (const auto &item : std::as_const(nodeDataPool)) {
             if (item && item->node) {
                 item->viewport = this;
                 item->node->attachViewportData(item.get());
@@ -91,7 +90,7 @@ NodeViewportData *Tracker::Viewport::getOrCreateNodeData(Node *node)
 
 void Tracker::Viewport::clearNodeData()
 {
-    for (const auto &item : nodeDataPool) {
+    for (const auto &item : std::as_const(nodeDataPool)) {
         if (item && item->node)
             item->node->detachViewportData(item.get());
     }
@@ -229,7 +228,7 @@ void Tracker::commit(QVector<Viewport> &viewports)
 
     // 单次遍历: 检测视口脏区 + 逆映射合并到世界空间
     QRegion viewportWorldDamage;
-    for (const Viewport &vp : viewports) {
+    for (const Viewport &vp : std::as_const(viewports)) {
         if (!vp.damage.isEmpty())
             viewportWorldDamage += mapRegionOuter(vp.worldToOutput.inverted(), vp.damage);
     }
@@ -255,7 +254,6 @@ void Tracker::commit(QVector<Viewport> &viewports)
     QRegion worldDamage = worldDamageWithViewport - viewportWorldDamage;
     for (Viewport &in : viewports)
         computeViewport(in, worldDamage);
-
     if (treeDirty)
         m_root->commitState();
 }

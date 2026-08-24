@@ -503,6 +503,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
 
         NodeViewportData *view = dataFactory(this);
         view->viewport = viewport;
+        view->outputBounds = boundsRect;
         view->visibleDamage = {};
         if (boundsRect.isEmpty()) {
             view->culled = true;
@@ -554,7 +555,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     QRegion nonOccludedBounds;
     NodeViewportData *view = dataFactory(this);
     view->viewport = viewport;
-
+    view->outputBounds = boundsReg.boundingRect();
     if (frontOpaque.isEmpty()) {
         view->occludedRegion = {};
         view->fullyOccluded = false;
@@ -721,6 +722,7 @@ void Node::applyOcclusionMulti(ViewportOcclusionState *states, int count,
 
             NodeViewportData *view = dataFactory(this, vps.viewport);
             view->viewport = vps.viewport;
+            view->outputBounds = boundsRect;
             view->visibleDamage = {};
             if (boundsRect.isEmpty()) {
                 view->culled = true;
@@ -770,7 +772,7 @@ void Node::applyOcclusionMulti(ViewportOcclusionState *states, int count,
         QRegion nonOccludedBounds;
         NodeViewportData *view = dataFactory(this, vps.viewport);
         view->viewport = vps.viewport;
-
+        view->outputBounds = boundsReg.boundingRect();
         if (vps.frontOpaque.isEmpty()) {
             view->occludedRegion = {};
             view->fullyOccluded = false;

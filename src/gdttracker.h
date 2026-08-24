@@ -69,7 +69,6 @@ public:
     // Primary commit: stateless, populates each Viewport::state in-place
     void commit(QVector<Viewport> &viewports);
 
-
 private:
     void computeViewport(Viewport &viewport, const QRegion &worldDamage);
     void computeAllViewports(QVector<Viewport> &viewports, const QRegion &worldDamage);

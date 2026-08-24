@@ -25,11 +25,13 @@ class RendererNode;
 struct NodeViewportData {
     QRegion visibleDamage;
     QRegion occludedRegion;
+    QRect outputBounds;          // Node's bounding rect in this viewport's output coordinates
     bool fullyOccluded = false;
     bool culled = false;
 
     const Viewport *viewport = nullptr;
     Node *node = nullptr;
+    void *userData = nullptr;    // Opaque pointer for external use (e.g., batch pointer)
     NodeViewportData *nextOnNode = nullptr;
     NodeViewportData *prevOnNode = nullptr;
 };

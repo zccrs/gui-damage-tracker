@@ -44,30 +44,24 @@ public:
 
     QRegion commit()
     {
-        m_viewport.outputRect = {};
-        m_viewport.worldToOutput = {};
-        m_viewport.damage = {};
-        QVector<Viewport> viewports;
-        viewports.append(std::move(m_viewport));
-        Tracker::commit(viewports);
-        m_viewport = std::move(viewports.first());
-        return m_viewport.state.damage;
+        m_vps[0].outputRect = {};
+        m_vps[0].worldToOutput = {};
+        m_vps[0].damage = {};
+        Tracker::commit(m_vps);
+        return m_vps[0].state.damage;
     }
 
     QRegion commit(const QRect &outputRect)
     {
-        m_viewport.outputRect = outputRect;
-        m_viewport.worldToOutput = {};
-        m_viewport.damage = {};
-        QVector<Viewport> viewports;
-        viewports.append(std::move(m_viewport));
-        Tracker::commit(viewports);
-        m_viewport = std::move(viewports.first());
-        return m_viewport.state.damage;
+        m_vps[0].outputRect = outputRect;
+        m_vps[0].worldToOutput = {};
+        m_vps[0].damage = {};
+        Tracker::commit(m_vps);
+        return m_vps[0].state.damage;
     }
 
 private:
-    Viewport m_viewport;
+    QVector<Viewport> m_vps{Viewport()};
 };
 
 class tst_Gdt : public QObject
