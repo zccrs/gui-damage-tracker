@@ -227,19 +227,18 @@ void Tracker::commit(QVector<Viewport> &viewports)
         return;
     }
 
-    bool hasViewportDamage = false;
+    // 单次遍历: 检测视口脏区 + 逆映射合并到世界空间
+    QRegion viewportWorldDamage;
     for (const Viewport &vp : viewports) {
-        if (!vp.damage.isEmpty()) {
-            hasViewportDamage = true;
-            break;
-        }
+        if (!vp.damage.isEmpty())
+            viewportWorldDamage += mapRegionOuter(vp.worldToOutput.inverted(), vp.damage);
     }
+    const bool hasViewportDamage = !viewportWorldDamage.isEmpty();
 
     const bool treeDirty = m_root->isDirty();
     if (!treeDirty && !hasViewportDamage) {
-        for (Viewport &in : viewports) {
+        for (Viewport &in : viewports)
             in.state.damage = {};
-        }
         return;
     }
 
@@ -248,9 +247,12 @@ void Tracker::commit(QVector<Viewport> &viewports)
     else
         m_root->clearFrameDamageRecursive();
 
-    QRegion worldDamage;
-    m_root->collectBackdrop(worldDamage);
+    // collectBackdrop 使用包含视口脏区的累加器，BackdropNode 能感知并扩散
+    QRegion worldDamageWithViewport = viewportWorldDamage;
+    m_root->collectBackdrop(worldDamageWithViewport);
 
+    // 场景图本身的 damage（不含视口脏区，避免跨视口泄漏）
+    QRegion worldDamage = worldDamageWithViewport - viewportWorldDamage;
     for (Viewport &in : viewports)
         computeViewport(in, worldDamage);
 
