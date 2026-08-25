@@ -387,17 +387,17 @@ ApplicationWindow {
                         }
                         Label { text: "节点"; color: win.mutedColor; font.pixelSize: 10 }
                         Rectangle { width: 40; height: 16; radius: 3; color: "#2dc470" }
-                        Label { text: "较旧损伤"; color: win.mutedColor; font.pixelSize: 10 }
+                        Label { text: "较旧渲染"; color: win.mutedColor; font.pixelSize: 10 }
                         Rectangle { width: 40; height: 16; radius: 3; color: "#e83e4e" }
-                        Label { text: "最新损伤"; color: win.mutedColor; font.pixelSize: 10 }
+                        Label { text: "最新渲染"; color: win.mutedColor; font.pixelSize: 10 }
                     }
                     RowLayout {
                         spacing: 8
                         Item { width: 28; height: 1 }
                         Rectangle { width: 40; height: 16; radius: 3; color: "#ffc107" }
-                        Label { text: "较旧 Flush"; color: win.mutedColor; font.pixelSize: 10 }
+                        Label { text: "较旧送显"; color: win.mutedColor; font.pixelSize: 10 }
                         Rectangle { width: 40; height: 16; radius: 3; color: "#9c27b0" }
-                        Label { text: "最新 Flush"; color: win.mutedColor; font.pixelSize: 10 }
+                        Label { text: "最新送显"; color: win.mutedColor; font.pixelSize: 10 }
                     }
                 }
 
@@ -431,18 +431,18 @@ ApplicationWindow {
                 }
                 ComboBox {
                     Layout.preferredWidth: 120
-                    model: ["损伤区域", "Flush 区域", "两者"]
+                    model: ["渲染区域", "送显区域", "两者"]
                     currentIndex: win.regionDisplayMode
                     onActivated: win.regionDisplayMode = currentIndex
                     ToolTip.visible: hovered
-                    ToolTip.text: "画布叠加显示损伤、Flush 或两者"
+                    ToolTip.text: "画布叠加显示实际渲染/Flush、最终送显或两者"
                 }
                 Switch {
-                    text: "保持当前损伤"
+                    text: "保持当前区域"
                     checked: win.holdCurrentDamage
                     onToggled: win.holdCurrentDamage = checked
                     ToolTip.visible: hovered
-                    ToolTip.text: "提交后的当前损伤矩形不随残留时间消失"
+                    ToolTip.text: "当前渲染和送显区域不随残留时间消失"
                 }
                 Button {
                     text: "提交"
@@ -757,15 +757,24 @@ ApplicationWindow {
                         implicitWidth: damageStatus.implicitWidth + 18
                         implicitHeight: 28
                         radius: 14
-                        color: (scene.damageRects.length || scene.damageRectsB.length) ? "#34202c" : "#172638"
-                        border.color: (scene.damageRects.length || scene.damageRectsB.length) ? "#8e3f55" : "#2b526a"
+                        color: ((win.regionDisplayMode === 1
+                                ? scene.presentRects.length + scene.presentRectsB.length
+                                : scene.renderRects.length + scene.renderRectsB.length) > 0)
+                               ? "#34202c" : "#172638"
+                        border.color: ((win.regionDisplayMode === 1
+                                       ? scene.presentRects.length + scene.presentRectsB.length
+                                       : scene.renderRects.length + scene.renderRectsB.length) > 0)
+                                      ? "#8e3f55" : "#2b526a"
                         Label {
                             id: damageStatus
                             anchors.centerIn: parent
-                            text: (scene.damageRects.length || scene.damageRectsB.length)
-                                  ? ("损伤  A " + scene.damageRects.length + "  ·  B " + scene.damageRectsB.length)
-                                  : "无损伤"
-                            color: (scene.damageRects.length || scene.damageRectsB.length) ? "#ffacba" : "#8dc8e8"
+                            text: win.regionDisplayMode === 0
+                                  ? ("渲染  A " + scene.renderRects.length + "  ·  B " + scene.renderRectsB.length)
+                                  : win.regionDisplayMode === 1
+                                    ? ("送显  A " + scene.presentRects.length + "  ·  B " + scene.presentRectsB.length)
+                                    : ("渲染 " + (scene.renderRects.length + scene.renderRectsB.length)
+                                       + "  ·  送显 " + (scene.presentRects.length + scene.presentRectsB.length))
+                            color: "#ffacba"
                             font.pixelSize: 10
                             font.weight: Font.DemiBold
                         }
@@ -1004,8 +1013,8 @@ ApplicationWindow {
 
                         DamageOverlay {
                             anchors.fill: parent
-                            frames: scene.damageFrames
-                            flushFrames: scene.flushFrames
+                            renderFrames: scene.renderFrames
+                            presentFrames: scene.presentFrames
                             displayMode: win.regionDisplayMode
                             historyDuration: win.damageHistoryDuration
                             holdCurrent: win.holdCurrentDamage
@@ -1485,7 +1494,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "可见区域"; color: win.mutedColor }
+                            Label { text: "直接可见区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap
@@ -1505,11 +1514,31 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "Backdrop 后不透明"; color: win.mutedColor }
+                            Label { text: "Effect 输入损伤"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap
-                                text: win.sel.worldEffectiveFrontOpaque || "—"
+                                text: win.sel.effectInputDamage || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Effect 输出边界"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.effectOutputBounds || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Effect 输出可见"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.effectOutputVisible || "—"
                                 color: win.textColor
                             }
                         }
@@ -1553,7 +1582,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "诱导损伤"; color: win.mutedColor }
+                            Label { text: "Effect 输出损伤"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap

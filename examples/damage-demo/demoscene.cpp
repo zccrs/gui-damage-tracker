@@ -67,35 +67,100 @@ static QString formatRegion(const QRegion &region)
     return parts.join(QStringLiteral(" ∪ "));
 }
 
+enum class DemoPassType {
+    EffectInput,
+    EffectOutput,
+    Main,
+};
+
+struct DemoRenderPass {
+    DemoPassType type;
+    const CustomNode *effect = nullptr;
+    QRegion damage;
+};
+
+struct DemoRenderResult {
+    QVector<DemoRenderPass> passes;
+    QRegion renderDamage;
+    QRegion flushDamage;
+    QRegion presentDamage;
+};
+
 class DemoRenderer
 {
 public:
-    static QRegion flushRegion(const Node *root, const QTransform &worldToOutput,
-                               const QRect &outputRect, const QRegion &viewportDamage,
-                               const QRegion &bufferDamage)
+    static DemoRenderResult render(const Node *root, const QTransform &worldToOutput,
+                                   const QRect &outputRect, const QRegion &rawWorldDamage,
+                                   const QRegion &presentDamage,
+                                   const QRegion &bufferDamage)
     {
-        QRegion incoming = viewportDamage + bufferDamage;
+        DemoRenderResult result;
+        result.presentDamage = presentDamage;
         if (!outputRect.isEmpty())
-            incoming &= outputRect;
-        if (!root || incoming.isEmpty())
-            return {};
+            result.presentDamage &= outputRect;
 
-        QRegion visibleWorld;
-        collectVisible(root, visibleWorld);
-        QRegion visibleOutput = mapRegionOuter(worldToOutput, visibleWorld);
+        if (!rawWorldDamage.isEmpty())
+            collectEffectPasses(root, worldToOutput, outputRect, result);
+
+        QRegion mainDamage = result.presentDamage + bufferDamage;
         if (!outputRect.isEmpty())
-            visibleOutput &= outputRect;
-        return incoming & visibleOutput;
+            mainDamage &= outputRect;
+        if (!mainDamage.isEmpty()) {
+            result.passes.append({DemoPassType::Main, nullptr, mainDamage});
+            result.renderDamage += mainDamage;
+        }
+
+        // This simulator uses exact scissor regions for every pass.
+        result.flushDamage = result.renderDamage;
+        return result;
     }
 
 private:
-    static void collectVisible(const Node *node, QRegion &visible)
+    static QRegion mapToOutput(const QRegion &worldRegion,
+                               const QTransform &worldToOutput,
+                               const QRect &outputRect)
+    {
+        if (worldRegion.isEmpty())
+            return {};
+        QRegion output;
+        if (worldToOutput.isAffine() && worldToOutput.isInvertible())
+            output = mapRegionOuter(worldToOutput, worldRegion);
+        else if (!outputRect.isEmpty())
+            output = QRegion(outputRect);
+        if (!outputRect.isEmpty())
+            output &= outputRect;
+        return output;
+    }
+
+    static void appendPass(DemoRenderResult &result, DemoPassType type,
+                           const CustomNode *effect, const QRegion &damage)
+    {
+        if (damage.isEmpty())
+            return;
+        result.passes.append({type, effect, damage});
+        result.renderDamage += damage;
+    }
+
+    static void collectEffectPasses(const Node *node, const QTransform &worldToOutput,
+                                    const QRect &outputRect, DemoRenderResult &result)
     {
         if (!node || !node->isVisible())
             return;
-        visible += node->worldVisibleRegion();
+
+        if (const CustomNode *effect = node->toCustom()) {
+            const QRegion visibleOutput =
+                effect->inducedDamage() & effect->effectOutputVisibleRegion();
+            if (!visibleOutput.isEmpty()) {
+                appendPass(result, DemoPassType::EffectInput, effect,
+                           mapToOutput(effect->effectInputDamage(),
+                                       worldToOutput, outputRect));
+                appendPass(result, DemoPassType::EffectOutput, effect,
+                           mapToOutput(visibleOutput, worldToOutput, outputRect));
+            }
+        }
+
         for (const Node *child = node->firstChild(); child; child = child->nextSibling())
-            collectVisible(child, visible);
+            collectEffectPasses(child, worldToOutput, outputRect, result);
     }
 };
 
@@ -262,7 +327,7 @@ void DemoScene::resetRoot()
     m_decor.clear();
     m_dragFrameTimer.stop();
     m_dragFramePending = false;
-    m_damageFrames.clear();
+    m_renderFrames.clear();
     m_selectedId = 0;
     m_colorIndex = 0;
     if (selectionChanged)
@@ -714,12 +779,12 @@ void DemoScene::finishSelectedMove()
 void DemoScene::clearTree()
 {
     resetRoot();
-    m_damageRects.clear();
-    m_damageRectsB.clear();
-    m_damageFrames.clear();
-    m_flushRects.clear();
-    m_flushRectsB.clear();
-    m_flushFrames.clear();
+    m_renderRects.clear();
+    m_renderRectsB.clear();
+    m_renderFrames.clear();
+    m_presentRects.clear();
+    m_presentRectsB.clear();
+    m_presentFrames.clear();
     rebuildLists();
     refreshSelectedProps();
     emit damageChanged();
@@ -985,7 +1050,7 @@ void DemoScene::advanceDemoFrame()
     } else if (m_demoSceneName == QLatin1String("backdrop-cover")) {
         if (auto *node = findNode(m_demoNodeA)) {
             if (auto *geometry = node->toGeometry())
-                geometry->markContentDirty(QRect(10, 10, 20, 20));
+                geometry->markContentDirty(QRect(60, 60, 20, 20));
         }
     } else if (m_demoSceneName == QLatin1String("backdrop")) {
         if (auto *node = findNode(m_demoNodeA)) {
@@ -1067,40 +1132,45 @@ void DemoScene::updateDamage(bool rebuildScene)
     m_tracker.prepareFrame();
     for (auto &vp : vps)
         m_tracker.commit(vp);
-    const QRegion damageA = vps[0].accumulatedDamage();
-    const QRegion damageB = vps[1].accumulatedDamage();
-    const QRegion flushA = DemoRenderer::flushRegion(
-        m_root.get(), t0, m_vpA.outputRect, damageA, bufferDamageA);
-    const QRegion flushB = DemoRenderer::flushRegion(
-        m_root.get(), t1, m_vpB.outputRect, damageB, bufferDamageB);
+    const QRegion presentA = vps[0].accumulatedDamage();
+    const QRegion presentB = vps[1].accumulatedDamage();
+    const DemoRenderResult renderA = DemoRenderer::render(
+        m_root.get(), t0, m_vpA.outputRect, m_tracker.rawWorldDamage(),
+        presentA, bufferDamageA);
+    const DemoRenderResult renderB = DemoRenderer::render(
+        m_root.get(), t1, m_vpB.outputRect, m_tracker.rawWorldDamage(),
+        presentB, bufferDamageB);
     m_injectedBufferDamageA = {};
     m_injectedBufferDamageB = {};
     m_tracker.finishFrame();
-    m_damageRects = regionToRects(damageA);
-    m_damageRectsB = regionToRects(damageB);
-    m_flushRects = regionToRects(flushA);
-    m_flushRectsB = regionToRects(flushB);
+
+    // Render/flush regions include all passes; present regions only describe
+    // final output pixels which differ from the previous displayed frame.
+    m_renderRects = regionToRects(renderA.flushDamage);
+    m_renderRectsB = regionToRects(renderB.flushDamage);
+    m_presentRects = regionToRects(renderA.presentDamage);
+    m_presentRectsB = regionToRects(renderB.presentDamage);
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const QRegion combined = damageA + damageB;
-    if (!combined.isEmpty()) {
+    const QRegion combinedRender = renderA.flushDamage + renderB.flushDamage;
+    if (!combinedRender.isEmpty()) {
         QVariantMap frame;
         frame.insert(QStringLiteral("timestamp"), now);
-        frame.insert(QStringLiteral("rects"), regionToRects(combined));
-        m_damageFrames.append(frame);
+        frame.insert(QStringLiteral("rects"), regionToRects(combinedRender));
+        m_renderFrames.append(frame);
         constexpr qsizetype maximumFrames = 120;
-        while (m_damageFrames.size() > maximumFrames)
-            m_damageFrames.removeFirst();
+        while (m_renderFrames.size() > maximumFrames)
+            m_renderFrames.removeFirst();
     }
-    const QRegion combinedFlush = flushA + flushB;
-    if (!combinedFlush.isEmpty()) {
+    const QRegion combinedPresent = renderA.presentDamage + renderB.presentDamage;
+    if (!combinedPresent.isEmpty()) {
         QVariantMap frame;
         frame.insert(QStringLiteral("timestamp"), now);
-        frame.insert(QStringLiteral("rects"), regionToRects(combinedFlush));
-        m_flushFrames.append(frame);
+        frame.insert(QStringLiteral("rects"), regionToRects(combinedPresent));
+        m_presentFrames.append(frame);
         constexpr qsizetype maximumFrames = 120;
-        while (m_flushFrames.size() > maximumFrames)
-            m_flushFrames.removeFirst();
+        while (m_presentFrames.size() > maximumFrames)
+            m_presentFrames.removeFirst();
     }
 
     if (rebuildScene)
@@ -1293,8 +1363,10 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("worldVisibleRegion"), formatRegion(n->worldVisibleRegion()));
     p.insert(QStringLiteral("worldFrontOpaque"), formatRegion(n->worldFrontOpaqueRegion()));
-    p.insert(QStringLiteral("worldEffectiveFrontOpaque"),
-             formatRegion(n->worldEffectiveFrontOpaqueRegion()));
+    p.insert(QStringLiteral("effectInputDamage"), formatRegion(n->effectInputDamage()));
+    p.insert(QStringLiteral("effectOutputBounds"), formatRegion(n->effectOutputBounds()));
+    p.insert(QStringLiteral("effectOutputVisible"),
+             formatRegion(n->effectOutputVisibleRegion()));
     p.insert(QStringLiteral("worldOpaqueRegion"), formatRegion(n->worldOpaqueRegion()));
     p.insert(QStringLiteral("worldBounds"), formatRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), formatRect(n->subtreeBounds()));

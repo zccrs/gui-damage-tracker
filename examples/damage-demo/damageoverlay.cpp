@@ -31,25 +31,25 @@ DamageOverlay::DamageOverlay(QQuickItem *parent)
     });
 }
 
-void DamageOverlay::setFrames(const QVariantList &frames)
+void DamageOverlay::setRenderFrames(const QVariantList &frames)
 {
-    if (m_frames == frames)
+    if (m_renderFrames == frames)
         return;
-    m_frames = frames;
-    if (!m_frames.isEmpty())
+    m_renderFrames = frames;
+    if (!m_renderFrames.isEmpty())
         m_repaintTimer.start();
-    emit framesChanged();
+    emit renderFramesChanged();
     update();
 }
 
-void DamageOverlay::setFlushFrames(const QVariantList &frames)
+void DamageOverlay::setPresentFrames(const QVariantList &frames)
 {
-    if (m_flushFrames == frames)
+    if (m_presentFrames == frames)
         return;
-    m_flushFrames = frames;
-    if (!m_flushFrames.isEmpty() && m_displayMode != 0)
+    m_presentFrames = frames;
+    if (!m_presentFrames.isEmpty() && m_displayMode != 0)
         m_repaintTimer.start();
-    emit flushFramesChanged();
+    emit presentFramesChanged();
     update();
 }
 
@@ -59,8 +59,8 @@ void DamageOverlay::setDisplayMode(int mode)
     if (m_displayMode == mode)
         return;
     m_displayMode = mode;
-    if ((m_displayMode != 1 && !m_frames.isEmpty())
-            || (m_displayMode != 0 && !m_flushFrames.isEmpty()))
+    if ((m_displayMode != 1 && !m_renderFrames.isEmpty())
+            || (m_displayMode != 0 && !m_presentFrames.isEmpty()))
         m_repaintTimer.start();
     emit displayModeChanged();
     update();
@@ -163,11 +163,11 @@ void DamageOverlay::paint(QPainter *painter)
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     bool hasVisibleFrame = false;
     if (m_displayMode != 1)
-        hasVisibleFrame |= paintSeries(painter, m_frames,
+        hasVisibleFrame |= paintSeries(painter, m_renderFrames,
                                        QColor(232, 62, 78, 110),
                                        QColor(45, 196, 112, 65), now);
     if (m_displayMode != 0)
-        hasVisibleFrame |= paintSeries(painter, m_flushFrames,
+        hasVisibleFrame |= paintSeries(painter, m_presentFrames,
                                        QColor(156, 39, 176, 110),
                                        QColor(255, 193, 7, 70), now);
 

@@ -95,10 +95,11 @@ public:
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
     QRegion worldVisibleRegion() const { return m_worldVisibleRegion; }
     QRegion worldFrontOpaqueRegion() const { return m_worldFrontOpaque; }
-    QRegion worldEffectiveFrontOpaqueRegion() const { return m_worldEffectiveFrontOpaque; }
     QRegion ownDamage() const { return m_ownDamage; }
+    QRegion effectInputDamage() const { return m_effectInputDamage; }
     QRegion inducedDamage() const { return m_inducedDamage; }
-    DirtyBits dirty() const { return m_dirty; }
+    QRegion effectOutputBounds() const { return m_effectOutputBounds; }
+    QRegion effectOutputVisibleRegion() const { return m_effectOutputVisibleRegion; }
     bool isDirty() const { return m_dirty != 0; }
 
     QString dumpTree() const;
@@ -114,12 +115,8 @@ private:
     void adopt(Node *child);
     void updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
                      QRegion &worldDamage);
-    void computeWorldVisibility(QRegion &worldFrontOpaque, const QRegion &worldDamage);
-    void collectVisibleUnion(QRegion &acc) const;
+    void computeWorldVisibility(QRegion &worldFrontOpaque, QRegion &presentDamage);
     void resetWorldVisibleRecursive();
-    void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
-                        QRegion &screen, const QTransform &worldToOutput,
-                        const QRect &outputRect);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
     Type m_type;
@@ -142,11 +139,18 @@ private:
     QRect m_subtreeAABB;
     QRegion m_worldOpaque;
     QRegion m_ownDamage;
+    QRegion m_effectInputDamage;
     QRegion m_inducedDamage;
+    QRegion m_structuralPresentDamage;
     QRegion m_pendingRemovedDamage;
+    QRegion m_pendingRemovedPresentDamage;
     QRegion m_worldVisibleRegion;
     QRegion m_worldFrontOpaque;
-    QRegion m_worldEffectiveFrontOpaque;
+    QRegion m_effectOutputBounds;
+    QRegion m_effectOutputVisibleRegion;
+    QRegion m_committedWorldVisibleRegion;
+    QRegion m_committedEffectOutputVisibleRegion;
+    QRegion m_committedSubtreeVisibleRegion;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
@@ -220,9 +224,14 @@ struct RenderContext {
     QRect outputBounds;                 // Node's output bounding rectangle in current viewport
 };
 
-// Generic custom node: modifies opaque and damage regions via callbacks.
-// Has no built-in sampling geometry; the callbacks receive frontOpaque/leaked
-// and collectedDamage respectively and return the modified regions.
+struct EffectDamage {
+    QRegion input;
+    QRegion output;
+    QRegion outputBounds;
+};
+
+// Generic custom node: converts accumulated damage behind it into explicit
+// effect input and output damage. Render targets remain renderer-owned.
 class CustomNode : public GeometryNode
 {
 public:
@@ -230,30 +239,20 @@ public:
 protected:
     explicit CustomNode(Type type);
 public:
-    using OpaqueProcessor = std::function<QRegion(const CustomNode *node,
-                                                  const QRegion &frontOpaque,
-                                                  const QRegion &leakedArea,
-                                                  const QTransform &worldTransform,
-                                                  const QRect &worldBounds)>;
-    using DamageProcessor = std::function<QRegion(const CustomNode *node,
-                                                  const QRegion &collectedDamage,
-                                                  const RenderContext &ctx)>;
+    using DamageProcessor = std::function<EffectDamage(const CustomNode *node,
+                                                       const QRegion &collectedDamage,
+                                                       const RenderContext &ctx)>;
 
-    void setOpaqueProcessor(OpaqueProcessor func);
-    OpaqueProcessor opaqueProcessor() const { return m_opaqueProcessor; }
     void setDamageProcessor(DamageProcessor func);
     DamageProcessor damageProcessor() const { return m_damageProcessor; }
 
 private:
     friend class Node;
     friend class Tracker;
-    OpaqueProcessor m_opaqueProcessor;
     DamageProcessor m_damageProcessor;
 };
 
-// BackdropNode: convenience subclass of CustomNode that presets default
-// opaque/damage processors implementing classic backdrop blur dilation.
-// No hardcoded type dispatch — all logic flows through CustomNode's processors.
+// BackdropNode presets a sample-input dependency and a dilated effect output.
 class BackdropNode : public CustomNode
 {
 public:
@@ -265,14 +264,9 @@ public:
     void setClip(bool clip);
     bool clip() const { return m_clipExpansion; }
 
-    static QRegion defaultDamageProcessor(const CustomNode *node,
-                                           const QRegion &collectedDamage,
-                                           const RenderContext &ctx);
-    static QRegion defaultOpaqueProcessor(const CustomNode *node,
-                                           const QRegion &frontOpaque,
-                                           const QRegion &leaked,
-                                           const QTransform &worldTransform,
-                                           const QRect &worldBounds);
+    static EffectDamage defaultDamageProcessor(const CustomNode *node,
+                                               const QRegion &collectedDamage,
+                                               const RenderContext &ctx);
 
 private:
     friend class Node;

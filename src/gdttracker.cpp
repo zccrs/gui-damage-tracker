@@ -32,53 +32,39 @@ void Viewport::finishFrame()
 
 // --- Tracker ---
 
-void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
+void Tracker::computeViewport(Viewport &vp, const QRegion &presentWorldDamage)
 {
     const QTransform &w2o = vp.worldToOutput();
     const QRect &outRect = vp.outputRect();
-    const bool usableTransform = w2o.isAffine() && w2o.isInvertible();
 
-    QRegion remaining;
-    if (!usableTransform && !outRect.isEmpty() && !worldDamage.isEmpty()) {
-        remaining = QRegion(outRect);
+    QRegion outputDamage;
+    if (Q_LIKELY(w2o.isAffine() && w2o.isInvertible())) {
+        outputDamage = mapRegionOuter(w2o, presentWorldDamage);
+    } else if (!outRect.isEmpty() && !presentWorldDamage.isEmpty()) {
+        outputDamage = QRegion(outRect);
     } else {
-        remaining = mapRegionOuter(w2o, worldDamage);
-    }
-    if (!outRect.isEmpty())
-        remaining &= outRect;
-
-    QRegion frontOpaque;
-    QRegion exposed;
-    QRegion screen;
-
-    if (m_root) {
-        m_root->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                               w2o, outRect);
+        outputDamage = mapRegionOuter(w2o, presentWorldDamage);
     }
 
     if (!outRect.isEmpty())
-        remaining &= outRect;
-    screen += remaining;
-
-    vp.m_accumulatedDamage += screen;
-    if (!outRect.isEmpty())
-        vp.m_accumulatedDamage &= outRect;
-
+        outputDamage &= outRect;
+    vp.m_accumulatedDamage += outputDamage;
 }
 
 void Tracker::prepareFrame()
 {
     Q_ASSERT(m_phase == Phase::Idle);
     m_phase = Phase::Prepared;
-    m_worldDamage = {};
+    m_rawWorldDamage = {};
+    m_presentWorldDamage = {};
     if (Q_UNLIKELY(!m_root))
         return;
     const bool treeDirty = m_root->isDirty();
     if (Q_LIKELY(!treeDirty))
         return;
-    m_root->updateWorld(QTransform(), false, m_worldDamage);
+    m_root->updateWorld(QTransform(), false, m_rawWorldDamage);
     QRegion worldFrontOpaque;
-    m_root->computeWorldVisibility(worldFrontOpaque, m_worldDamage);
+    m_root->computeWorldVisibility(worldFrontOpaque, m_presentWorldDamage);
 }
 
 void Tracker::commit(Viewport &vp)
@@ -92,8 +78,7 @@ void Tracker::commit(Viewport &vp)
     if (Q_LIKELY(!treeDirty))
         return;
 
-    QRegion worldDamage = m_worldDamage;
-    computeViewport(vp, worldDamage);
+    computeViewport(vp, m_presentWorldDamage);
 }
 
 void Tracker::finishFrame()

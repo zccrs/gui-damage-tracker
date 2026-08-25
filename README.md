@@ -25,7 +25,7 @@
 | `Node` | 树结构、可见性、脏位传播和每帧世界坐标结果。默认没有自身内容。 |
 | `GeometryNode` | 内容包围盒、内容局部脏区和内容局部不透明区域。 |
 | `TransformNode` | 为整棵子树提供平移、缩放、旋转或组合 `QTransform`。 |
-| `CustomNode` | 通过 damage/opaque processor 表达非普通几何的渲染依赖。 |
+| `CustomNode` | 将后方累计 Damage 转换为明确的 Effect 输入/输出依赖。 |
 | `BackdropNode` | `CustomNode` 的预设实现；后方内容变化时产生扩张损伤。 |
 
 `GeometryNode::boundingRect()` 位于节点局部坐标系；它不会自动继承父
@@ -47,15 +47,16 @@ node->markContentDirty(QRect(12, 24, 26, 20));
 
 ### Tracker
 
-`Tracker` 只负责场景状态和场景 damage：
+`Tracker` 只负责场景分析和最终画面变化：
 
-- 共享世界坐标预计算。
-- Backdrop 等自定义节点的依赖损伤。
-- 世界不透明区域和 renderer 可用的可见区域。
-- 将世界 damage 映射并裁剪到各个 `Viewport`。
+- 世界矩阵、bounds 和 opaque。
+- 节点原始 `ownDamage`。
+- Custom/Backdrop 的输入与输出依赖。
+- 节点最终直接可见区域。
+- 遮挡过滤后的世界送显候选。
+- 将送显候选保守映射到各个 `Viewport`。
 
-`Tracker` 不负责 swapchain buffer age，也不负责最终 `flushRegion`。
-这些数据属于实际 renderer。
+Tracker 不负责 RenderTarget、buffer age、RenderPass 或实际 flush。
 
 ### Viewport
 
@@ -63,30 +64,31 @@ node->markContentDirty(QRect(12, 24, 26, 20));
 
 - `outputRect()`：输出坐标边界。
 - `worldToOutput()`：世界坐标到输出坐标的变换。
-- `accumulatedDamage()`：本次提交后该输出需要处理的场景 damage。
+- `accumulatedDamage()`：最终画面变化映射到该输出后的送显候选。
 
-同一轮 `prepareFrame()` 后可对多个 Viewport 依次调用 `commit()`。每个
-Viewport 独立执行变换、裁剪和遮挡计算。
+同一轮 `prepareFrame()` 后可对多个 Viewport 依次调用 `commit()`。
+`commit()` 不再遍历场景，只做保守映射和输出裁剪。
 
 ### Renderer
 
-Renderer 位于 gdt 之外。它消费 Tracker 的输出，并结合自身状态：
+Renderer 位于 gdt 之外，负责：
 
-- `Viewport::accumulatedDamage()`
-- 当前 swapchain buffer 的 buffer-age damage
-- 节点的 `worldVisibleRegion()`
-- 输出裁剪和实际绘制策略
+- 为主输出和每个 Effect 分配 RenderTarget。
+- 合并每个目标自己的 buffer-age damage。
+- 按 Effect 依赖顺序执行 RenderPass。
+- 记录每个目标的实际 flush。
+- 将最终主输出 `presentDamage` 交给显示 backend。
 
-Example 中的 `DemoRenderer` 只是一个简单模拟：
+Example 的 `DemoRenderer` 建立三类 Pass：
 
 ```text
-incoming = viewportDamage ∪ bufferDamage
-flush    = incoming
-           ∩ mapToOutput(所有节点 worldVisibleRegion 的并集)
-           ∩ outputRect
+EffectInput  -> 重画 Backdrop 需要读取的后方内容
+EffectOutput -> 重新生成 Effect 可见输出
+Main         -> presentDamage ∪ mainBufferDamage
 ```
 
-真实 renderer 可以进一步按节点、RenderPass、layer 或 GPU scissor 拆分。
+模拟 Renderer 使用精确 scissor，因此每个 Pass 的 `flushDamage` 等于该
+Pass 的 `renderDamage`。真实 Renderer 可以保守扩大或全量重画。
 
 ---
 
@@ -98,19 +100,27 @@ flush    = incoming
 | `opaqueRegion()` | 内容局部 | 能确定完全不透明的内容像素。 |
 | `worldBounds()` | 世界 | 包围盒经过祖先变换后的保守整数边界。 |
 | `worldOpaqueRegion()` | 世界 | 内容局部不透明区域映射到世界坐标的结果。 |
-| `ownDamage()` | 世界 | 节点自身移动、形变、显隐或内容变化产生的损伤。 |
-| `inducedDamage()` | 世界 | Backdrop/Custom processor 产生的依赖损伤。 |
-| `worldFrontOpaqueRegion()` | 世界 | 处理节点前，已在它上方积累的不透明区域。 |
-| `worldEffectiveFrontOpaqueRegion()` | 世界 | Backdrop processor 打洞后的前方不透明区域。 |
-| `worldVisibleRegion()` | 世界 | renderer 不能剔除的节点区域。 |
-| `Tracker::worldDamage()` | 世界 | 当前帧所有 own/induced damage 的并集。 |
-| `Viewport::accumulatedDamage()` | 输出 | 世界 damage 经该输出变换、裁剪和遮挡后的结果。 |
-| renderer `flushRegion` | 输出 | renderer 合并 buffer damage 后真正刷新的区域。 |
+| `ownDamage()` | 世界 | 节点自身移动、形变、显隐或内容变化。 |
+| `effectInputDamage()` | 世界 | Custom Effect 必须重新读取/生成的输入。 |
+| `inducedDamage()` | 世界 | Custom Effect 重新生成的输出区域。 |
+| `worldFrontOpaqueRegion()` | 世界 | 节点上方已经积累的不透明区域。 |
+| `worldVisibleRegion()` | 世界 | 节点对最终画面的直接可见区域。 |
+| `Tracker::rawWorldDamage()` | 世界 | 未做最终遮挡的 own/effect output 并集。 |
+| `Tracker::presentWorldDamage()` | 世界 | 经过直接可见性过滤的最终画面变化。 |
+| `Viewport::accumulatedDamage()` | 输出 | `presentWorldDamage` 的保守输出映射。 |
+| renderer render damage | 目标坐标 | 当前 RenderTarget 逻辑上需要重画的区域。 |
+| renderer flush damage | 目标坐标 | Renderer 实际写入该 RenderTarget 的区域。 |
+| output present damage | 输出 | 最终主输出相对上一帧真正变化的区域。 |
 
-这里的 `worldVisibleRegion()` 使用 renderer 语义：Backdrop 采样依赖可以
-使一个被普通不透明节点挡住的后方节点仍有非空区域，因为 renderer 仍需
-生成 Backdrop 的输入内容。若集成方还需要“最终肉眼直接可见”的区域，应
-在 renderer 中单独维护，不能与采样依赖混用。
+一个被不透明前景完全覆盖的底层节点可以同时满足：
+
+```text
+worldVisibleRegion = empty
+effectInputDamage   = non-empty
+```
+
+它对最终画面不可见，但仍是 Backdrop 的输入，必须在 Effect 输入 Pass 中
+重画。Effect 输入/离屏 flush 不能并入最终 Output present damage。
 
 ---
 
@@ -136,11 +146,18 @@ flush    = incoming
 2. 计算 `worldBounds`、`subtreeBounds` 和 `worldOpaqueRegion`。
 3. 根据已提交状态生成旧位置和新位置的 `ownDamage`。
 4. 将内容局部 dirty 映射成世界 `ownDamage`。
-5. 将当前累计 damage 传给 `CustomNode::DamageProcessor`。
-6. Backdrop 根据后方相关 damage 生成 `inducedDamage`。
-7. 汇总为 `Tracker::worldDamage()`。
+5. 将当前累计 raw damage 传给 `CustomNode::DamageProcessor`。
+6. Custom processor 返回 `EffectDamage { input, output }`。
+7. `input` 保存为 `effectInputDamage()`。
+8. `output` 保存为 `inducedDamage()` 并继续向前传播。
+9. 汇总为 `Tracker::rawWorldDamage()`。
 
-世界状态更新和 damage 汇聚在同一次正序遍历中完成。
+Backdrop 的默认 processor：
+
+```text
+input  = accumulatedDamage ∩ sampleBounds
+output = dilate(input, expansion)
+```
 
 ### 2. `Tracker::prepareFrame()`：逆序遍历
 
@@ -148,36 +165,52 @@ flush    = incoming
 
 1. 累积当前节点上方的世界不透明区域。
 2. 写入 `worldFrontOpaqueRegion()`。
-3. Custom/Backdrop opaque processor 只在此处以世界坐标运行一次。
-4. 写入 processor 处理后的 `worldEffectiveFrontOpaqueRegion()`。
-5. 由有效前方不透明区域计算 `worldVisibleRegion()`。
+3. 计算 `worldVisibleRegion = bounds - frontOpaque`。
+4. 用节点旧/新直接可见区域裁剪 own/induced damage。
+5. 将删除、隐藏和可见性变化加入送显候选。
 6. 累加节点自身 `worldOpaqueRegion()`，继续处理后方节点。
+7. 汇总为 `Tracker::presentWorldDamage()`。
 
-Backdrop 打洞依赖第一轮产生的 `worldDamage`。因此底层节点即使被顶层
-不透明节点覆盖，只要仍是 Backdrop 的采样输入，就不会被 renderer 错误
-剔除。
+Backdrop 不再修改前方 opaque，也不会让被遮挡的输入节点变成“直接
+可见”。输入依赖只通过 `effectInputDamage()` 表达。
 
-### 3. `Tracker::commit(viewport)`：每输出计算
+### 3. `Tracker::commit(viewport)`：每输出映射
 
-对每个 Viewport 独立执行：
+`commit()` 不再遍历节点。它只执行：
 
-1. 用 `worldToOutput` 映射世界 damage。
-2. 裁剪到 `outputRect`。
-3. 按前到后遍历节点，映射不透明和有效前方不透明区域。
-4. 消除被不透明内容覆盖的 damage。
-5. 处理前景移开等 exposure damage。
-6. 写入 `Viewport::accumulatedDamage()`。
+```text
+outputPresent =
+    mapOuter(worldToOutput, presentWorldDamage)
+    ∩ outputRect
+```
 
-`applyOcclusion()` 不再调用 opaque processor。它只映射第二轮已经得到的
-世界坐标结果，避免把输出坐标的 leaked region 与世界坐标 bounds 混用。
+不可逆或无法安全映射的矩阵会保守退化为整个 `outputRect`。结果写入
+`Viewport::accumulatedDamage()`。
 
-### 4. Renderer 计算 flush
+### 4. Renderer 执行 RenderPass
 
-Renderer 取得 `Viewport::accumulatedDamage()`，再合并当前目标 buffer 的
-buffer-age damage。Example 的 `DemoRenderer` 根据节点可见区域生成
-`flushRegion`，并提供 Damage/Flush/两者三种叠加显示。
+Renderer 对每个可见 Effect：
 
-Damage 使用红色到绿色的时间序列；Flush 使用紫色到黄色的时间序列。
+1. 将 `effectInputDamage` 映射到 Effect 输入目标。
+2. 合并该输入目标自己的 buffer-age damage。
+3. 重画后方输入节点。
+4. 将 `inducedDamage ∩ effect.worldVisibleRegion` 映射到 Effect 输出目标。
+5. 执行 Effect。
+
+主输出：
+
+```text
+mainRenderDamage = viewportPresentDamage ∪ mainBufferDamage
+```
+
+Renderer 分别记录每个目标的 flush；只有最终主输出的 present damage
+交给显示 backend。
+
+Example 中：
+
+- 渲染/Flush：红色到绿色。
+- 最终送显：紫色到黄色。
+- Buffer-only 修复会出现在渲染区域中，但不会出现在送显区域中。
 
 ### 5. 完成本帧
 
@@ -259,18 +292,22 @@ scaled.finishFrame();
 ### Renderer 合并 Buffer Damage
 
 ```cpp
-QRegion viewportDamage = primary.accumulatedDamage();
-QRegion bufferDamage = swapchain.damageForCurrentBuffer();
+QRegion presentDamage = primary.accumulatedDamage();
+QRegion mainBufferDamage = swapchain.damageForCurrentBuffer();
 
-QRegion incoming = viewportDamage + bufferDamage;
-QRegion flushRegion = renderer.computeFlushRegion(root, primary, incoming);
+RenderFramePlan plan = renderer.buildFramePlan(
+    root, primary, presentDamage, mainBufferDamage);
 
-renderer.render(flushRegion);
-swapchain.present(flushRegion);
+renderer.execute(plan);
+
+for (const RenderPassResult &pass : plan.passResults)
+    pass.target->damageRing.add(pass.flushDamage);
+
+swapchain.present(plan.presentDamage);
 ```
 
-`bufferDamage` 和 `flushRegion` 刻意不放在 Tracker/Viewport 内：只有
-renderer 知道当前 render target、buffer age、RenderPass 和最终提交策略。
+Buffer damage、RenderTarget、各 Pass flush 和最终 present damage 刻意不放
+在 Tracker/Viewport 内：只有 renderer 知道实际 target 和执行策略。
 
 ---
 
@@ -331,15 +368,15 @@ renderer 知道当前 render target、buffer age、RenderPass 和最终提交策
 
 1. 内置遮挡移动、局部内容变化、Backdrop 扩散、采样被遮挡、揭露、
    旋转和缩放场景。
-2. 可选择只显示 Damage、只显示 Flush 或同时显示：
-   - Damage：最新帧红色，历史帧绿色。
-   - Flush：最新帧紫色，历史帧黄色。
+2. 可选择只显示实际渲染/Flush、最终送显或同时显示：
+   - 渲染/Flush：最新帧红色，历史帧绿色。
+   - 最终送显：最新帧紫色，历史帧黄色。
 3. 可保持最新区域不随历史时长消失。
 4. 节点检查器显示：
    - world bounds / subtree bounds
-   - own damage / induced damage
-   - world opaque / front opaque / effective front opaque
-   - renderer 语义的 world visible region
+   - own damage / effect input / effect output
+   - world opaque / front opaque
+   - 最终直接可见的 world visible region
 5. 左侧树负责选择、排序和重挂节点；画布拖动不会隐式改变选择。
 6. 可关闭自动提交，先修改场景，再手动观察一次完整提交。
 

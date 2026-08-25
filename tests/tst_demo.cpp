@@ -6,6 +6,19 @@
 #include <QPainter>
 #include <QTest>
 
+static QRegion regionFromRects(const QVariantList &rects)
+{
+    QRegion region;
+    for (const QVariant &value : rects) {
+        const QVariantMap rect = value.toMap();
+        region += QRect(rect.value(QStringLiteral("x")).toInt(),
+                        rect.value(QStringLiteral("y")).toInt(),
+                        rect.value(QStringLiteral("w")).toInt(),
+                        rect.value(QStringLiteral("h")).toInt());
+    }
+    return region;
+}
+
 class tst_Demo : public QObject
 {
     Q_OBJECT
@@ -138,15 +151,15 @@ void tst_Demo::builtInScenesAnimateAndAllowEditing()
     QCOMPARE(scene.demoScenes().size(), 7);
     QCOMPARE(scene.demoSceneName(), QStringLiteral("content"));
     QVERIFY(!scene.selectedProps().isEmpty());
-    const qsizetype initialFrames = scene.damageFrames().size();
+    const qsizetype initialFrames = scene.renderFrames().size();
     scene.setDemoRunning(false);
     scene.setDemoRunning(true);
     scene.stepDemoFrame();
-    QVERIFY(scene.damageFrames().size() > initialFrames);
+    QVERIFY(scene.renderFrames().size() > initialFrames);
     scene.setDemoRunning(false);
-    const qsizetype pausedFrames = scene.damageFrames().size();
+    const qsizetype pausedFrames = scene.renderFrames().size();
     scene.stepDemoFrame();
-    QCOMPARE(scene.damageFrames().size(), pausedFrames);
+    QCOMPARE(scene.renderFrames().size(), pausedFrames);
 
     const int count = scene.treeNodes().size();
     scene.addGeometry();
@@ -159,9 +172,9 @@ void tst_Demo::rotationAndScaleScenesAnimate()
         scene.loadDemoScene(name);
         QCOMPARE(scene.selectedProps().value(QStringLiteral("type")).toString(),
                  QStringLiteral("Transform"));
-        const qsizetype initialFrames = scene.damageFrames().size();
+        const qsizetype initialFrames = scene.renderFrames().size();
         scene.stepDemoFrame();
-        QVERIFY(scene.damageFrames().size() > initialFrames);
+        QVERIFY(scene.renderFrames().size() > initialFrames);
     }
 }
 
@@ -231,28 +244,28 @@ void tst_Demo::refreshRateThrottlesDragFrames()
 {
     DemoScene scene;
     scene.setRefreshRate(1);
-    const qsizetype initialFrames = scene.damageFrames().size();
+    const qsizetype initialFrames = scene.renderFrames().size();
 
     scene.moveSelectedBy(1, 0);
-    QCOMPARE(scene.damageFrames().size(), initialFrames + 1);
+    QCOMPARE(scene.renderFrames().size(), initialFrames + 1);
 
     scene.moveSelectedBy(1, 0);
-    QCOMPARE(scene.damageFrames().size(), initialFrames + 1);
+    QCOMPARE(scene.renderFrames().size(), initialFrames + 1);
 
     scene.finishSelectedMove();
-    QCOMPARE(scene.damageFrames().size(), initialFrames + 2);
+    QCOMPARE(scene.renderFrames().size(), initialFrames + 2);
 }
 
 void tst_Demo::damageHistoryAccumulatesFrames()
 {
     DemoScene scene;
-    const qsizetype initialFrames = scene.damageFrames().size();
+    const qsizetype initialFrames = scene.renderFrames().size();
 
     scene.moveSelectedBy(2, 0);
     scene.moveSelectedBy(3, 0);
     scene.finishSelectedMove();
 
-    const QVariantList frames = scene.damageFrames();
+    const QVariantList frames = scene.renderFrames();
     QCOMPARE(frames.size(), initialFrames + 2);
     const QVariantMap previous = frames.at(frames.size() - 2).toMap();
     const QVariantMap newest = frames.constLast().toMap();
@@ -283,7 +296,7 @@ void tst_Demo::damageHistoryColorsOldGreenNewRed()
 
     DamageOverlay overlay;
     overlay.setHistoryDuration(1800);
-    overlay.setFrames(frames);
+    overlay.setRenderFrames(frames);
 
     QImage image(82, 12, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -302,7 +315,7 @@ void tst_Demo::damageHistoryColorsOldGreenNewRed()
         frame(now - 100, QRect(0, 0, 10, 10)),
         frame(now, QRect(0, 0, 10, 10)),
     };
-    overlay.setFrames(overlapping);
+    overlay.setRenderFrames(overlapping);
     image.fill(Qt::transparent);
     QPainter overlapPainter(&image);
     overlay.paint(&overlapPainter);
@@ -311,7 +324,7 @@ void tst_Demo::damageHistoryColorsOldGreenNewRed()
     QVERIFY(overlapDamage.red() > overlapDamage.green());
     QVERIFY(overlapDamage.alpha() < 200);
     // Time controls expiration only. A lone frame stays red for its lifetime.
-    overlay.setFrames({frame(now - 1500, QRect(0, 0, 10, 10))});
+    overlay.setRenderFrames({frame(now - 1500, QRect(0, 0, 10, 10))});
     image.fill(Qt::transparent);
     QPainter singlePainter(&image);
     overlay.paint(&singlePainter);
@@ -349,10 +362,10 @@ void tst_Demo::autoCommitOffMoveDoesNotCommit()
 {
     DemoScene scene;
     scene.setAutoCommit(false);
-    const qsizetype frames = scene.damageFrames().size();
+    const qsizetype frames = scene.renderFrames().size();
     scene.moveSelectedBy(5, 7);
     scene.finishSelectedMove();
-    QCOMPARE(scene.damageFrames().size(), frames);
+    QCOMPARE(scene.renderFrames().size(), frames);
     QCOMPARE(scene.selectedProps().value(QStringLiteral("x")).toReal(), 85.0);
     QCOMPARE(scene.selectedProps().value(QStringLiteral("y")).toReal(), 87.0);
 }
@@ -392,12 +405,29 @@ void tst_Demo::simulatedRendererProvidesFlush()
     scene.loadDemoScene(QStringLiteral("backdrop-cover"));
     scene.setDemoRunning(false);
 
-    QVERIFY(!scene.damageFrames().isEmpty());
-    QVERIFY(!scene.flushFrames().isEmpty());
-    QVERIFY(!scene.flushRects().isEmpty());
+    const QRegion cover(40, 40, 160, 160);
+    const QRegion backdropBounds(100, 100, 140, 140);
+    const QRegion initialPresent = cover + backdropBounds;
+    QCOMPARE(regionFromRects(scene.renderRects()), initialPresent);
+    QCOMPARE(regionFromRects(scene.presentRects()), initialPresent);
+
+    scene.markSelectedContentDirtyAt(60, 60, 20, 20);
+    const QRegion effectInput(180, 180, 20, 20);
+    const QRegion effectOutput(164, 164, 52, 52);
+    const QRegion presentDamage = effectOutput - cover;
+    const QRegion renderDamage = effectInput + presentDamage;
+    QCOMPARE(regionFromRects(scene.renderRects()), renderDamage);
+    QCOMPARE(regionFromRects(scene.presentRects()), presentDamage);
+    QCOMPARE(regionFromRects(scene.renderFrames().constLast().toMap()
+                                 .value(QStringLiteral("rects")).toList()),
+             renderDamage);
+    QCOMPARE(regionFromRects(scene.presentFrames().constLast().toMap()
+                                 .value(QStringLiteral("rects")).toList()),
+             presentDamage);
 
     scene.injectSwapchainDamage(0, 120, 120, 20, 20);
-    QVERIFY(!scene.flushRects().isEmpty());
+    QCOMPARE(regionFromRects(scene.renderRects()), QRegion(120, 120, 20, 20));
+    QCOMPARE(regionFromRects(scene.presentRects()), QRegion());
 }
 
 void tst_Demo::rotationAxisPersistsAfterCommit()
@@ -461,7 +491,7 @@ void tst_Demo::transformInspectorExposesMatrix()
     scene.setScaleSelected(2, 3);
     QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sx")).toReal() - 2.0) < 0.1);
     QVERIFY(qAbs(scene.selectedProps().value(QStringLiteral("sy")).toReal() - 3.0) < 0.1);
-    QVERIFY(!scene.damageFrames().isEmpty());
+    QVERIFY(!scene.renderFrames().isEmpty());
 
     scene.loadDemoScene(QStringLiteral("rotation"));
     const QVariantMap rotatedVisual = scene.visualNodesModel()->getRow(0);

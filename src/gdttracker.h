@@ -10,7 +10,7 @@
 
 namespace Gdt {
 
-// Viewport: output geometry, transform and accumulated scene damage.
+// Viewport: output geometry, transform and accumulated present damage.
 // Setters mark it dirty relative to the last finishFrame(). Tracker does not
 // turn viewport changes into full damage; the caller/renderer decides how to
 // combine viewport and buffer damage.
@@ -63,7 +63,7 @@ public:
     // forward world-state/damage collection, then reverse opacity/visibility.
     void prepareFrame();
 
-    // Phase 2: map, clip and occlusion-filter scene damage for one viewport.
+    // Phase 2: conservatively map present damage for one viewport.
     // May be called for multiple viewports after one prepareFrame().
     void commit(Viewport &vp);
 
@@ -71,13 +71,15 @@ public:
     // Viewport::finishFrame() remains the renderer's responsibility.
     void finishFrame();
 
-    QRegion worldDamage() const { return m_worldDamage; }
+    QRegion rawWorldDamage() const { return m_rawWorldDamage; }
+    QRegion presentWorldDamage() const { return m_presentWorldDamage; }
 
 private:
-    void computeViewport(Viewport &viewport, const QRegion &worldDamage);
+    void computeViewport(Viewport &viewport, const QRegion &presentWorldDamage);
 
     Node *m_root = nullptr;
-    QRegion m_worldDamage;
+    QRegion m_rawWorldDamage;
+    QRegion m_presentWorldDamage;
     Phase m_phase = Phase::Idle;
 };
 
