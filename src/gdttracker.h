@@ -10,10 +10,10 @@
 
 namespace Gdt {
 
-// Viewport: persistent damage ring with self-contained change detection.
-// Set outputRect/worldToOutput via setters; if they change since last
-// finishFrame(), the viewport is "dirty" and commit() will produce full
-// damage (old rect ∪ new rect). finishFrame() clears the dirty flag.
+// Viewport: output geometry, transform and accumulated scene damage.
+// Setters mark it dirty relative to the last finishFrame(). Tracker does not
+// turn viewport changes into full damage; the caller/renderer decides how to
+// combine viewport and buffer damage.
 class Viewport
 {
 public:
@@ -31,7 +31,8 @@ public:
 
     QRegion accumulatedDamage() const { return m_accumulatedDamage; }
 
-    // Called by Tracker::finishFrame() — syncs committed state, clears dirty.
+    // Called by the renderer after consuming this frame's damage.
+    // Commits viewport configuration and clears accumulatedDamage().
     void finishFrame();
 
 private:
@@ -58,15 +59,16 @@ public:
     void setRoot(Node *root);
     Node *root() const { return m_root; }
 
-    // Phase 1: shared world-space computation (updateWorld + collectWorldDamage)
+    // Phase 1: two shared world-space traversals:
+    // forward world-state/damage collection, then reverse opacity/visibility.
     void prepareFrame();
 
-    // Phase 2: per-viewport occlusion culling + damage accumulation.
-    // If viewport geometry/transform changed since last frame, produces
-    // full damage (old rect ∪ new rect) in addition to tree damage.
+    // Phase 2: map, clip and occlusion-filter scene damage for one viewport.
+    // May be called for multiple viewports after one prepareFrame().
     void commit(Viewport &vp);
 
-    // Phase 3: shared state commit + sync all viewports' committed state.
+    // Phase 3: commit shared node state and return to Idle.
+    // Viewport::finishFrame() remains the renderer's responsibility.
     void finishFrame();
 
     QRegion worldDamage() const { return m_worldDamage; }

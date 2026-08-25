@@ -212,15 +212,8 @@ Node *Node::takeChild(Node *child)
     return child;
 }
 
-void Node::clearFrameDamageRecursive()
-{
-    m_ownDamage = {};
-    m_inducedDamage = {};
-    for (Node *child = m_firstChild; child; child = child->m_next)
-        child->clearFrameDamageRecursive();
-}
-
-void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
+void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
+                       QRegion &worldDamage)
 {
     m_inducedDamage = {};
     m_ownDamage = m_pendingRemovedDamage;
@@ -228,72 +221,60 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
 
     const bool matrixChanged = parentWorldChanged
         || (m_type == Type::Transform && (m_dirty & DirtyMatrix));
+    const bool stateDirty = matrixChanged || m_dirty != 0;
 
-    if (Q_UNLIKELY(!matrixChanged && m_dirty == 0)) {
-        clearFrameDamageRecursive();
-        return;
+    if (stateDirty) {
+        if (m_type == Type::Transform)
+            m_worldTransform = parentWorld * static_cast<TransformNode *>(this)->m_matrix;
+        else
+            m_worldTransform = parentWorld;
     }
 
-    if (m_type == Type::Transform)
-        m_worldTransform = parentWorld * static_cast<TransformNode *>(this)->m_matrix;
-    else
-        m_worldTransform = parentWorld;
-
     if (Q_UNLIKELY(!m_visible)) {
-        if (m_committedVisible)
+        if (stateDirty && m_committedVisible)
             m_ownDamage += m_committedSubtreeAABB;
-        m_worldBounds = {};
-        m_subtreeAABB = {};
-        m_worldOpaque = {};
-        return;
-    }
-
-    const bool appearing = !m_committedVisible || (m_dirty & DirtyAdded);
-    const bool visibilityFlipped = m_visible != m_committedVisible;
-    const bool shapeChanged = matrixChanged
-        || (m_dirty & (DirtyGeometry | DirtyOpaque))
-        || visibilityFlipped;
-
-    if (hasContent()) {
-        auto *geo = static_cast<GeometryNode *>(this);
-        if (geo->m_fullyOpaque)
-            geo->syncFullyOpaqueRegion();
-
-        m_worldBounds = mapOuter(m_worldTransform, geo->m_boundingRect);
-        const QTransform c2w = contentToWorld(m_worldTransform, geo->m_boundingRect);
-        m_worldOpaque = mapRegionInner(c2w, geo->m_opaqueRegion);
-
-        if (appearing) {
-            m_ownDamage += m_worldBounds;
-        } else {
-            if (shapeChanged) {
-                m_ownDamage += m_committedWorldBounds;
-                m_ownDamage += m_worldBounds;
-            }
-            if (m_dirty & DirtyContent) {
-                QRegion mapped = mapRegionOuter(c2w, geo->m_pendingContentDamage);
-                mapped &= m_worldBounds;
-                m_ownDamage += mapped;
-            }
+        if (stateDirty) {
+            m_worldBounds = {};
+            m_subtreeAABB = {};
+            m_worldOpaque = {};
         }
-        geo->m_pendingContentDamage = {};
-    } else if (matrixChanged) {
-        m_worldBounds = {};
-    }
-
-    QRect subtree = m_worldBounds;
-    for (Node *child = m_firstChild; child; child = child->m_next) {
-        child->updateWorld(m_worldTransform, matrixChanged);
-        subtree = subtree.united(child->m_subtreeAABB);
-    }
-    m_subtreeAABB = subtree;
-}
-
-void Node::collectWorldDamage(QRegion &acc)
-{
-    if (Q_UNLIKELY(!m_visible)) {
-        acc += m_ownDamage;
+        worldDamage += m_ownDamage;
         return;
+    }
+
+    if (stateDirty) {
+        const bool appearing = !m_committedVisible || (m_dirty & DirtyAdded);
+        const bool visibilityFlipped = m_visible != m_committedVisible;
+        const bool shapeChanged = matrixChanged
+            || (m_dirty & (DirtyGeometry | DirtyOpaque))
+            || visibilityFlipped;
+
+        if (hasContent()) {
+            auto *geo = static_cast<GeometryNode *>(this);
+            if (geo->m_fullyOpaque)
+                geo->syncFullyOpaqueRegion();
+
+            m_worldBounds = mapOuter(m_worldTransform, geo->m_boundingRect);
+            const QTransform c2w = contentToWorld(m_worldTransform, geo->m_boundingRect);
+            m_worldOpaque = mapRegionInner(c2w, geo->m_opaqueRegion);
+
+            if (appearing) {
+                m_ownDamage += m_worldBounds;
+            } else {
+                if (shapeChanged) {
+                    m_ownDamage += m_committedWorldBounds;
+                    m_ownDamage += m_worldBounds;
+                }
+                if (m_dirty & DirtyContent) {
+                    QRegion mapped = mapRegionOuter(c2w, geo->m_pendingContentDamage);
+                    mapped &= m_worldBounds;
+                    m_ownDamage += mapped;
+                }
+            }
+            geo->m_pendingContentDamage = {};
+        } else if (matrixChanged) {
+            m_worldBounds = {};
+        }
     }
 
     if (Q_UNLIKELY(m_type == Type::Custom)) {
@@ -301,30 +282,47 @@ void Node::collectWorldDamage(QRegion &acc)
         if (cn->m_damageProcessor) {
             RenderContext ctx;
             ctx.viewport = nullptr;
-            ctx.overallDamage = acc;
+            ctx.overallDamage = worldDamage;
             ctx.worldTransform = m_worldTransform;
             ctx.boundingRect = cn->boundingRect();
             ctx.worldBounds = m_worldBounds;
             ctx.outputBounds = m_worldBounds;
-            m_inducedDamage = cn->m_damageProcessor(cn, acc, ctx);
-            acc += m_inducedDamage;
+            m_inducedDamage = cn->m_damageProcessor(cn, worldDamage, ctx);
+            worldDamage += m_inducedDamage;
         }
     }
+    worldDamage += m_ownDamage;
 
-    acc += m_ownDamage;
-
-    for (Node *child = m_firstChild; child; child = child->m_next)
-        child->collectWorldDamage(acc);
+    QRect subtree = m_worldBounds;
+    for (Node *child = m_firstChild; child; child = child->m_next) {
+        child->updateWorld(m_worldTransform, matrixChanged, worldDamage);
+        if (stateDirty)
+            subtree = subtree.united(child->m_subtreeAABB);
+    }
+    if (stateDirty)
+        m_subtreeAABB = subtree;
 }
 
 void Node::resetWorldVisibleRecursive()
 {
     m_worldVisibleRegion = {};
+    m_worldFrontOpaque = {};
+    m_worldEffectiveFrontOpaque = {};
     for (Node *child = m_firstChild; child; child = child->m_next)
         child->resetWorldVisibleRecursive();
 }
 
-void Node::computeWorldVisibility(QRegion &worldFrontOpaque)
+void Node::collectVisibleUnion(QRegion &acc) const
+{
+    if (Q_UNLIKELY(!m_visible))
+        return;
+    if (!m_worldVisibleRegion.isEmpty())
+        acc += m_worldVisibleRegion;
+    for (const Node *child = m_firstChild; child; child = child->m_next)
+        child->collectVisibleUnion(acc);
+}
+
+void Node::computeWorldVisibility(QRegion &worldFrontOpaque, const QRegion &worldDamage)
 {
     if (Q_UNLIKELY(!m_visible)) {
         resetWorldVisibleRecursive();
@@ -332,14 +330,23 @@ void Node::computeWorldVisibility(QRegion &worldFrontOpaque)
     }
 
     for (Node *child = m_lastChild; child; child = child->m_prev)
-        child->computeWorldVisibility(worldFrontOpaque);
+        child->computeWorldVisibility(worldFrontOpaque, worldDamage);
+
+    m_worldFrontOpaque = worldFrontOpaque;
+
+    if (Q_UNLIKELY(m_type == Type::Custom)) {
+        auto *cn = static_cast<CustomNode *>(this);
+        if (cn->m_opaqueProcessor) {
+            const QRegion leaked = worldDamage & QRegion(m_worldBounds);
+            worldFrontOpaque = cn->m_opaqueProcessor(
+                cn, worldFrontOpaque, leaked, m_worldTransform, m_worldBounds);
+        }
+    }
+    m_worldEffectiveFrontOpaque = worldFrontOpaque;
 
     if (Q_UNLIKELY(!hasContent())) {
         m_worldVisibleRegion = {};
-        return;
-    }
-
-    if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
+    } else if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
         m_worldVisibleRegion = QRegion(m_worldBounds);
     } else {
         const QRect frontAABB = worldFrontOpaque.boundingRect();
@@ -427,30 +434,19 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             opaque &= outputRect;
     }
 
-    // Custom/Backdrop opaque: processor-driven, no type dispatch
+    // Custom processors run once in the world-space visibility pass. Reuse
+    // their post-processor front-opaque snapshot here, mapped to this output.
     if (Q_UNLIKELY(m_type == Type::Custom)) {
-        auto *cn = static_cast<CustomNode *>(this);
-        if (cn->m_opaqueProcessor) {
-            QRegion leaked;
-            if (!remaining.isEmpty() && !m_worldBounds.isEmpty()) {
-                QRegion boundsForLeak;
-                if (usableTransform)
-                    boundsForLeak = QRegion(mapOuter(worldToOutput, QRectF(m_worldBounds)));
-                else if (!outputRect.isEmpty())
-                    boundsForLeak = QRegion(outputRect);
-                else
-                    boundsForLeak = QRegion(mapOuter(worldToOutput, QRectF(m_worldBounds)));
-                if (!outputRect.isEmpty())
-                    boundsForLeak &= outputRect;
-                leaked = remaining & boundsForLeak;
-            }
-            QRegion newFrontOpaque = cn->m_opaqueProcessor(cn, frontOpaque, leaked, m_worldTransform, m_worldBounds);
-            QRegion removed = frontOpaque - newFrontOpaque;
-            if (!removed.isEmpty()) {
-                frontOpaque = newFrontOpaque;
-                exposed += removed;
-            }
-        }
+        QRegion effectiveFrontOpaque;
+        if (usableTransform)
+            effectiveFrontOpaque = mapRegionInner(worldToOutput,
+                                                  m_worldEffectiveFrontOpaque);
+        if (!outputRect.isEmpty())
+            effectiveFrontOpaque &= outputRect;
+        const QRegion removed = frontOpaque - effectiveFrontOpaque;
+        frontOpaque = effectiveFrontOpaque;
+        if (!removed.isEmpty())
+            exposed += removed;
     }
 
     QRegion visibleLocalDamage;

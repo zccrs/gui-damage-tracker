@@ -21,6 +21,8 @@ ApplicationWindow {
     readonly property color accentColor: "#6d7cff"
     property var sel: ({})
     property int damageHistoryDuration: 200
+    property int regionDisplayMode: 1
+    property bool holdCurrentDamage: false
     readonly property int detectedRefreshRate: win.screen && win.screen.refreshRate > 0
                                                ? Math.round(win.screen.refreshRate) : 60
     property int sceneRefreshRate: detectedRefreshRate
@@ -256,9 +258,6 @@ ApplicationWindow {
         onTriggered: scene.addBackdrop()
     }
     Action {
-        text: "自定义渲染节点"
-    }
-    Action {
         id: addGroupAction
         text: "分组节点"
         onTriggered: scene.addBasic()
@@ -342,7 +341,7 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        height: 72
+        height: 88
         color: "#0f1625"
         border.color: win.borderColor
         border.width: 1
@@ -373,20 +372,34 @@ ApplicationWindow {
 
             RowLayout {
                 spacing: 10
-                Label { text: "图例"; color: win.mutedColor; font.pixelSize: 10 }
-                Rectangle {
-                    width: 40; height: 16; radius: 4
-                    border.color: "#8794ff"
-                    gradient: Gradient {
-                        GradientStop { position: 0; color: "#a6b0ff" }
-                        GradientStop { position: 1; color: "#4e5ee8" }
+                ColumnLayout {
+                    spacing: 4
+                    RowLayout {
+                        spacing: 8
+                        Label { text: "图例"; color: win.mutedColor; font.pixelSize: 10 }
+                        Rectangle {
+                            width: 40; height: 16; radius: 4
+                            border.color: "#8794ff"
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: "#a6b0ff" }
+                                GradientStop { position: 1; color: "#4e5ee8" }
+                            }
+                        }
+                        Label { text: "节点"; color: win.mutedColor; font.pixelSize: 10 }
+                        Rectangle { width: 40; height: 16; radius: 3; color: "#2dc470" }
+                        Label { text: "较旧损伤"; color: win.mutedColor; font.pixelSize: 10 }
+                        Rectangle { width: 40; height: 16; radius: 3; color: "#e83e4e" }
+                        Label { text: "最新损伤"; color: win.mutedColor; font.pixelSize: 10 }
+                    }
+                    RowLayout {
+                        spacing: 8
+                        Item { width: 28; height: 1 }
+                        Rectangle { width: 40; height: 16; radius: 3; color: "#ffc107" }
+                        Label { text: "较旧 Flush"; color: win.mutedColor; font.pixelSize: 10 }
+                        Rectangle { width: 40; height: 16; radius: 3; color: "#9c27b0" }
+                        Label { text: "最新 Flush"; color: win.mutedColor; font.pixelSize: 10 }
                     }
                 }
-                Label { text: "节点"; color: win.mutedColor; font.pixelSize: 10 }
-                Rectangle { width: 40; height: 16; radius: 3; color: "#2dc470" }
-                Label { text: "较旧损伤"; color: win.mutedColor; font.pixelSize: 10 }
-                Rectangle { width: 40; height: 16; radius: 3; color: "#e83e4e" }
-                Label { text: "最新损伤"; color: win.mutedColor; font.pixelSize: 10 }
 
                 Rectangle { width: 1; height: 34; color: win.borderColor }
 
@@ -416,15 +429,29 @@ ApplicationWindow {
                     ToolTip.visible: hovered
                     ToolTip.text: "每次编辑后自动提交"
                 }
+                ComboBox {
+                    Layout.preferredWidth: 120
+                    model: ["损伤区域", "Flush 区域", "两者"]
+                    currentIndex: win.regionDisplayMode
+                    onActivated: win.regionDisplayMode = currentIndex
+                    ToolTip.visible: hovered
+                    ToolTip.text: "画布叠加显示损伤、Flush 或两者"
+                }
+                Switch {
+                    text: "保持当前损伤"
+                    checked: win.holdCurrentDamage
+                    onToggled: win.holdCurrentDamage = checked
+                    ToolTip.visible: hovered
+                    ToolTip.text: "提交后的当前损伤矩形不随残留时间消失"
+                }
                 Button {
                     text: "提交"
                     highlighted: true
                     onClicked: scene.commit()
                 }
             }
-    }
-
         }
+    }
     SplitView {
         anchors.fill: parent
         orientation: Qt.Horizontal
@@ -978,7 +1005,10 @@ ApplicationWindow {
                         DamageOverlay {
                             anchors.fill: parent
                             frames: scene.damageFrames
+                            flushFrames: scene.flushFrames
+                            displayMode: win.regionDisplayMode
                             historyDuration: win.damageHistoryDuration
+                            holdCurrent: win.holdCurrentDamage
                             refreshRate: win.sceneRefreshRate
                         }
 
@@ -1114,12 +1144,17 @@ ApplicationWindow {
                     }
                 }
                 ScrollView {
+                    id: inspectorScroll
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
                     contentWidth: availableWidth
+                    contentHeight: inspectorContent.implicitHeight
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                    // Viewport 属性编辑器 (当选中 Viewport 时展示)
+                    Column {
+                        id: inspectorContent
+                        width: inspectorScroll.availableWidth
                     ColumnLayout {
                         width: parent.width
                         visible: scene.selectionType === 2
@@ -1460,6 +1495,26 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
+                            Label { text: "前方不透明"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.worldFrontOpaque || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Backdrop 后不透明"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.worldEffectiveFrontOpaque || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
                             Label { text: "不透明区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
@@ -1488,6 +1543,26 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
+                            Label { text: "自身损伤"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.ownDamage || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "诱导损伤"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.inducedDamage || "—"
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
                             Label { text: "脏标记"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
@@ -1508,6 +1583,7 @@ ApplicationWindow {
                             enabled: deleteAction.enabled
                             onClicked: deleteAction.trigger()
                         }
+                    }
                     }
                 }
             }

@@ -67,6 +67,39 @@ static QString formatRegion(const QRegion &region)
     return parts.join(QStringLiteral(" ∪ "));
 }
 
+class DemoRenderer
+{
+public:
+    static QRegion flushRegion(const Node *root, const QTransform &worldToOutput,
+                               const QRect &outputRect, const QRegion &viewportDamage,
+                               const QRegion &bufferDamage)
+    {
+        QRegion incoming = viewportDamage + bufferDamage;
+        if (!outputRect.isEmpty())
+            incoming &= outputRect;
+        if (!root || incoming.isEmpty())
+            return {};
+
+        QRegion visibleWorld;
+        collectVisible(root, visibleWorld);
+        QRegion visibleOutput = mapRegionOuter(worldToOutput, visibleWorld);
+        if (!outputRect.isEmpty())
+            visibleOutput &= outputRect;
+        return incoming & visibleOutput;
+    }
+
+private:
+    static void collectVisible(const Node *node, QRegion &visible)
+    {
+        if (!node || !node->isVisible())
+            return;
+        visible += node->worldVisibleRegion();
+        for (const Node *child = node->firstChild(); child; child = child->nextSibling())
+            collectVisible(child, visible);
+    }
+};
+
+
 
 DemoScene::DemoScene(QObject *parent)
     : QObject(parent)
@@ -310,6 +343,8 @@ QVariantList DemoScene::demoScenes() const
                     {QStringLiteral("value"), QStringLiteral("content")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("背景采样扩散")},
                     {QStringLiteral("value"), QStringLiteral("backdrop")}},
+        QVariantMap{{QStringLiteral("text"), QStringLiteral("采样被遮挡")},
+                    {QStringLiteral("value"), QStringLiteral("backdrop-cover")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("揭露后方节点")},
                     {QStringLiteral("value"), QStringLiteral("reveal")}},
         QVariantMap{{QStringLiteral("text"), QStringLiteral("旋转节点")},
@@ -646,6 +681,11 @@ void DemoScene::moveNodeBy(quint64 id, qreal dx, qreal dy)
     } else {
         return;
     }
+    if (!m_autoCommit) {
+        rebuildVisualNodes();
+        refreshSelectedProps();
+        return;
+    }
 
     m_dragFramePending = true;
     if (!m_dragFrameTimer.isActive()) {
@@ -663,7 +703,7 @@ void DemoScene::moveSelectedBy(qreal dx, qreal dy)
 
 void DemoScene::finishSelectedMove()
 {
-    if (m_dragFramePending)
+    if (m_autoCommit && m_dragFramePending)
         updateDamage(false);
     m_dragFramePending = false;
     m_dragFrameTimer.stop();
@@ -677,6 +717,9 @@ void DemoScene::clearTree()
     m_damageRects.clear();
     m_damageRectsB.clear();
     m_damageFrames.clear();
+    m_flushRects.clear();
+    m_flushRectsB.clear();
+    m_flushFrames.clear();
     rebuildLists();
     refreshSelectedProps();
     emit damageChanged();
@@ -811,6 +854,35 @@ void DemoScene::buildDemoScene(const QString &name)
         return;
     }
 
+    if (name == QLatin1String("backdrop-cover")) {
+        auto *dirty = new GeometryNode;
+        dirty->setName(QStringLiteral("底层脏内容"));
+        dirty->setBoundingRect(QRectF(120, 120, 80, 80));
+        dirty->setFullyOpaque(true);
+        m_decor.insert(dirty->id(), Decor{QColor("#5b8def")});
+
+        auto *backdrop = new BackdropNode;
+        backdrop->setName(QStringLiteral("背景采样"));
+        backdrop->setBoundingRect(QRectF(100, 100, 140, 140));
+        backdrop->setExpansion(16);
+        m_decor.insert(backdrop->id(), Decor{QColor("#00bcd4")});
+
+        auto *cover = new GeometryNode;
+        cover->setName(QStringLiteral("顶层不透明"));
+        cover->setBoundingRect(QRectF(40, 40, 160, 160));
+        cover->setFullyOpaque(true);
+        m_decor.insert(cover->id(), Decor{QColor("#9353d3")});
+
+        m_root->appendChild(dirty);
+        m_root->appendChild(backdrop);
+        m_root->appendChild(cover);
+        m_demoNodeA = dirty->id();
+        m_demoNodeB = backdrop->id();
+        m_demoNodeC = cover->id();
+        setSelectedId(dirty->id());
+        return;
+    }
+
     if (name == QLatin1String("rotation")) {
         auto *transform = new TransformNode;
         transform->setName(QStringLiteral("旋转变换"));
@@ -910,6 +982,11 @@ void DemoScene::advanceDemoFrame()
                 geometry->markContentDirty(QRect(12 + triangle * 2, 24, 26, 20));
             }
         }
+    } else if (m_demoSceneName == QLatin1String("backdrop-cover")) {
+        if (auto *node = findNode(m_demoNodeA)) {
+            if (auto *geometry = node->toGeometry())
+                geometry->markContentDirty(QRect(10, 10, 20, 20));
+        }
     } else if (m_demoSceneName == QLatin1String("backdrop")) {
         if (auto *node = findNode(m_demoNodeA)) {
             if (auto *geometry = node->toGeometry())
@@ -977,26 +1054,53 @@ void DemoScene::updateDamage(bool rebuildScene)
     if (m_vpB.rotation != 0.0)
         t1.rotate(m_vpB.rotation, Qt::ZAxis);
     vp1.setWorldToOutput(t1);
-    m_injectedBufferDamageA = {};
-    m_injectedBufferDamageB = {};
+    QRegion bufferDamageA = m_injectedBufferDamageA;
+    QRegion bufferDamageB = m_injectedBufferDamageB;
+    if (m_vpA.swapchainEnabled)
+        bufferDamageA += m_vpA.swapchainDamageRect.translated(m_vpA.outputRect.topLeft());
+    if (m_vpB.swapchainEnabled)
+        bufferDamageB += m_vpB.swapchainDamageRect.translated(m_vpB.outputRect.topLeft());
+
     QVector<Tracker::Viewport> vps{vp0, vp1};
-    for (auto &vp : vps) vp.finishFrame();
-    m_tracker.prepareFrame(); for (auto &vp : vps) m_tracker.commit(vp);
+    for (auto &vp : vps)
+        vp.finishFrame();
+    m_tracker.prepareFrame();
+    for (auto &vp : vps)
+        m_tracker.commit(vp);
     const QRegion damageA = vps[0].accumulatedDamage();
     const QRegion damageB = vps[1].accumulatedDamage();
+    const QRegion flushA = DemoRenderer::flushRegion(
+        m_root.get(), t0, m_vpA.outputRect, damageA, bufferDamageA);
+    const QRegion flushB = DemoRenderer::flushRegion(
+        m_root.get(), t1, m_vpB.outputRect, damageB, bufferDamageB);
+    m_injectedBufferDamageA = {};
+    m_injectedBufferDamageB = {};
     m_tracker.finishFrame();
     m_damageRects = regionToRects(damageA);
     m_damageRectsB = regionToRects(damageB);
+    m_flushRects = regionToRects(flushA);
+    m_flushRectsB = regionToRects(flushB);
 
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const QRegion combined = damageA + damageB;
     if (!combined.isEmpty()) {
         QVariantMap frame;
-        frame.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+        frame.insert(QStringLiteral("timestamp"), now);
         frame.insert(QStringLiteral("rects"), regionToRects(combined));
         m_damageFrames.append(frame);
         constexpr qsizetype maximumFrames = 120;
         while (m_damageFrames.size() > maximumFrames)
             m_damageFrames.removeFirst();
+    }
+    const QRegion combinedFlush = flushA + flushB;
+    if (!combinedFlush.isEmpty()) {
+        QVariantMap frame;
+        frame.insert(QStringLiteral("timestamp"), now);
+        frame.insert(QStringLiteral("rects"), regionToRects(combinedFlush));
+        m_flushFrames.append(frame);
+        constexpr qsizetype maximumFrames = 120;
+        while (m_flushFrames.size() > maximumFrames)
+            m_flushFrames.removeFirst();
     }
 
     if (rebuildScene)
@@ -1098,10 +1202,6 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
                     .arg(qRound(r.width()))
                     .arg(qRound(r.height()))
                     .arg(bg->expansion().left());
-        label = QStringLiteral("自定义渲染 #%1 [%2x%3 动态计算]")
-                    .arg(n->id())
-                    .arg(qRound(r.width()))
-                    .arg(qRound(r.height()));
     } else if (auto *geometry = n->toGeometry()) {
         const QRectF r = geometry->boundingRect();
         const QString typeDesc = geometry->isFullyOpaque() ? QStringLiteral("不透明几何")
@@ -1192,9 +1292,14 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("worldVisibleRegion"), formatRegion(n->worldVisibleRegion()));
+    p.insert(QStringLiteral("worldFrontOpaque"), formatRegion(n->worldFrontOpaqueRegion()));
+    p.insert(QStringLiteral("worldEffectiveFrontOpaque"),
+             formatRegion(n->worldEffectiveFrontOpaqueRegion()));
     p.insert(QStringLiteral("worldOpaqueRegion"), formatRegion(n->worldOpaqueRegion()));
     p.insert(QStringLiteral("worldBounds"), formatRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), formatRect(n->subtreeBounds()));
+    p.insert(QStringLiteral("ownDamage"), formatRegion(n->ownDamage()));
+    p.insert(QStringLiteral("inducedDamage"), formatRegion(n->inducedDamage()));
     p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);

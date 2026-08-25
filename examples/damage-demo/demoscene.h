@@ -26,6 +26,9 @@ class DemoScene : public QObject
     Q_PROPERTY(QVariantList damageRects READ damageRects NOTIFY damageChanged)
     Q_PROPERTY(QVariantList damageRectsB READ damageRectsB NOTIFY damageChanged)
     Q_PROPERTY(QVariantList damageFrames READ damageFrames NOTIFY damageChanged)
+    Q_PROPERTY(QVariantList flushRects READ flushRects NOTIFY damageChanged)
+    Q_PROPERTY(QVariantList flushRectsB READ flushRectsB NOTIFY damageChanged)
+    Q_PROPERTY(QVariantList flushFrames READ flushFrames NOTIFY damageChanged)
     Q_PROPERTY(QRect viewportA READ viewportA NOTIFY sceneChanged)
     Q_PROPERTY(QRect viewportB READ viewportB NOTIFY sceneChanged)
     Q_PROPERTY(int selectionType READ selectionType NOTIFY selectionChanged)
@@ -47,6 +50,9 @@ public:
     QVariantList damageRects() const { return m_damageRects; }
     QVariantList damageRectsB() const { return m_damageRectsB; }
     QVariantList damageFrames() const { return m_damageFrames; }
+    QVariantList flushRects() const { return m_flushRects; }
+    QVariantList flushRectsB() const { return m_flushRectsB; }
+    QVariantList flushFrames() const { return m_flushFrames; }
     enum class SelectionType {
         None = 0,
         Node = 1,
@@ -156,6 +162,9 @@ private:
     QVariantList m_damageRects;
     QVariantList m_damageRectsB;
     QVariantList m_damageFrames;
+    QVariantList m_flushRects;
+    QVariantList m_flushRectsB;
+    QVariantList m_flushFrames;
     QRegion m_injectedBufferDamageA;
     struct ViewportConfig {
         int id = 0;

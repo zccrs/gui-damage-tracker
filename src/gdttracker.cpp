@@ -63,6 +63,7 @@ void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
     vp.m_accumulatedDamage += screen;
     if (!outRect.isEmpty())
         vp.m_accumulatedDamage &= outRect;
+
 }
 
 void Tracker::prepareFrame()
@@ -75,10 +76,9 @@ void Tracker::prepareFrame()
     const bool treeDirty = m_root->isDirty();
     if (Q_LIKELY(!treeDirty))
         return;
-    m_root->updateWorld(QTransform(), false);
+    m_root->updateWorld(QTransform(), false, m_worldDamage);
     QRegion worldFrontOpaque;
-    m_root->computeWorldVisibility(worldFrontOpaque);
-    m_root->collectWorldDamage(m_worldDamage);
+    m_root->computeWorldVisibility(worldFrontOpaque, m_worldDamage);
 }
 
 void Tracker::commit(Viewport &vp)

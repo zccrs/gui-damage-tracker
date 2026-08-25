@@ -29,6 +29,10 @@ private slots:
     void damageHistoryColorsOldGreenNewRed();
     void damageHistoryDurationIsConfigurable();
     void refreshRateIsConfigurable();
+    void autoCommitOffMoveDoesNotCommit();
+    void holdCurrentKeepsLatestDamageFrame();
+    void backdropSceneUsesBackdropLabel();
+    void simulatedRendererProvidesFlush();
     void rotationAxisPersistsAfterCommit();
     void transformInspectorExposesMatrix();
 };
@@ -131,7 +135,7 @@ void tst_Demo::builtInScenesAnimateAndAllowEditing()
 {
     DemoScene scene;
     scene.loadDemoScene(QStringLiteral("content"));
-    QCOMPARE(scene.demoScenes().size(), 6);
+    QCOMPARE(scene.demoScenes().size(), 7);
     QCOMPARE(scene.demoSceneName(), QStringLiteral("content"));
     QVERIFY(!scene.selectedProps().isEmpty());
     const qsizetype initialFrames = scene.damageFrames().size();
@@ -339,6 +343,61 @@ void tst_Demo::refreshRateIsConfigurable()
     QCOMPARE(overlay.refreshRate(), 144);
     overlay.setRefreshRate(0);
     QCOMPARE(overlay.refreshRate(), 1);
+}
+
+void tst_Demo::autoCommitOffMoveDoesNotCommit()
+{
+    DemoScene scene;
+    scene.setAutoCommit(false);
+    const qsizetype frames = scene.damageFrames().size();
+    scene.moveSelectedBy(5, 7);
+    scene.finishSelectedMove();
+    QCOMPARE(scene.damageFrames().size(), frames);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("x")).toReal(), 85.0);
+    QCOMPARE(scene.selectedProps().value(QStringLiteral("y")).toReal(), 87.0);
+}
+
+void tst_Demo::holdCurrentKeepsLatestDamageFrame()
+{
+    DamageOverlay overlay;
+    overlay.setHoldCurrent(true);
+    QVERIFY(overlay.holdCurrent());
+    overlay.setDisplayMode(2);
+    QCOMPARE(overlay.displayMode(), 2);
+    overlay.setDisplayMode(1);
+    QCOMPARE(overlay.displayMode(), 1);
+    overlay.setHoldCurrent(false);
+    QVERIFY(!overlay.holdCurrent());
+}
+
+void tst_Demo::backdropSceneUsesBackdropLabel()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop"));
+    bool found = false;
+    const QVariantList tree = scene.treeNodes();
+    for (const QVariant &row : tree) {
+        const QString name = row.toMap().value(QStringLiteral("name")).toString();
+        if (name.contains(QStringLiteral("背景采样"))) {
+            found = true;
+            QVERIFY(!name.contains(QStringLiteral("自定义渲染")));
+        }
+    }
+    QVERIFY(found);
+}
+
+void tst_Demo::simulatedRendererProvidesFlush()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop-cover"));
+    scene.setDemoRunning(false);
+
+    QVERIFY(!scene.damageFrames().isEmpty());
+    QVERIFY(!scene.flushFrames().isEmpty());
+    QVERIFY(!scene.flushRects().isEmpty());
+
+    scene.injectSwapchainDamage(0, 120, 120, 20, 20);
+    QVERIFY(!scene.flushRects().isEmpty());
 }
 
 void tst_Demo::rotationAxisPersistsAfterCommit()

@@ -165,6 +165,9 @@ private slots:
     void worldVisibleHideShow();
     void worldVisibleNegativeCoords();
     void worldVisibleRotate90();
+    void backdropLeakOpensCoveredVisible();
+    void opaqueCoverHidesWithoutBackdrop();
+    void backdropProcessorViewportTransform();
 };
 
 void tst_Gdt::emptyCommit()
@@ -1818,6 +1821,81 @@ void tst_Gdt::worldVisibleNegativeCoords()
     TestTracker tracker(&root);
     tracker.commit();
     COMPARE_REGION(g->worldVisibleRegion(), QRegion(-30, -10, 20, 20));
+}
+
+void tst_Gdt::backdropLeakOpensCoveredVisible()
+{
+    Node root;
+    auto *dirty = new GeometryNode;
+    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
+    dirty->setFullyOpaque(true);
+    auto *bg = new BackdropNode;
+    bg->setBoundingRect(QRectF(100, 100, 140, 140));
+    bg->setExpansion(16);
+    auto *cover = new GeometryNode;
+    cover->setBoundingRect(QRectF(40, 40, 160, 160));
+    cover->setFullyOpaque(true);
+    root.appendChild(dirty);
+    root.appendChild(bg);
+    root.appendChild(cover);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+
+    QVERIFY(cover->worldFrontOpaqueRegion().isEmpty());
+    QVERIFY(!dirty->worldFrontOpaqueRegion().isEmpty());
+    QVERIFY(!dirty->worldVisibleRegion().isEmpty());
+    QVERIFY((dirty->worldVisibleRegion() - QRegion(120, 120, 80, 80)).isEmpty());
+}
+
+void tst_Gdt::opaqueCoverHidesWithoutBackdrop()
+{
+    Node root;
+    auto *dirty = new GeometryNode;
+    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
+    dirty->setFullyOpaque(true);
+    auto *cover = new GeometryNode;
+    cover->setBoundingRect(QRectF(40, 40, 160, 160));
+    cover->setFullyOpaque(true);
+    root.appendChild(dirty);
+    root.appendChild(cover);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+    COMPARE_REGION(dirty->worldVisibleRegion(), QRegion());
+    COMPARE_REGION(dirty->worldFrontOpaqueRegion(), QRegion(40, 40, 160, 160));
+}
+
+
+void tst_Gdt::backdropProcessorViewportTransform()
+{
+    Node root;
+    auto *dirty = new GeometryNode;
+    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
+    auto *bg = new BackdropNode;
+    bg->setBoundingRect(QRectF(100, 100, 140, 140));
+    bg->setExpansion(16);
+    bg->setClip(false);
+    auto *cover = new GeometryNode;
+    cover->setBoundingRect(QRectF(40, 40, 160, 160));
+    cover->setFullyOpaque(true);
+    root.appendChild(dirty);
+    root.appendChild(bg);
+    root.appendChild(cover);
+
+    Tracker tracker(&root);
+    Tracker::Viewport vp{QRect(0, 0, 800, 800), QTransform::fromScale(2, 2)};
+    vp.finishFrame();
+    tracker.prepareFrame();
+    tracker.commit(vp);
+    tracker.finishFrame();
+
+    dirty->markContentDirty(QRect(10, 10, 20, 20));
+    vp.finishFrame();
+    tracker.prepareFrame();
+    tracker.commit(vp);
+    QVERIFY(!vp.accumulatedDamage().isEmpty());
+    tracker.finishFrame();
 }
 
 void tst_Gdt::worldVisibleRotate90()

@@ -94,6 +94,10 @@ public:
     QRect subtreeBounds() const { return m_subtreeAABB; }
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
     QRegion worldVisibleRegion() const { return m_worldVisibleRegion; }
+    QRegion worldFrontOpaqueRegion() const { return m_worldFrontOpaque; }
+    QRegion worldEffectiveFrontOpaqueRegion() const { return m_worldEffectiveFrontOpaque; }
+    QRegion ownDamage() const { return m_ownDamage; }
+    QRegion inducedDamage() const { return m_inducedDamage; }
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
@@ -108,10 +112,10 @@ private:
     void attach(Node *child, Node *prev, Node *next);
     void unlink(Node *child);
     void adopt(Node *child);
-    void clearFrameDamageRecursive();
-    void updateWorld(const QTransform &parentWorld, bool parentWorldChanged);
-    void collectWorldDamage(QRegion &acc);
-    void computeWorldVisibility(QRegion &worldFrontOpaque);
+    void updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
+                     QRegion &worldDamage);
+    void computeWorldVisibility(QRegion &worldFrontOpaque, const QRegion &worldDamage);
+    void collectVisibleUnion(QRegion &acc) const;
     void resetWorldVisibleRecursive();
     void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                         QRegion &screen, const QTransform &worldToOutput,
@@ -141,6 +145,8 @@ private:
     QRegion m_inducedDamage;
     QRegion m_pendingRemovedDamage;
     QRegion m_worldVisibleRegion;
+    QRegion m_worldFrontOpaque;
+    QRegion m_worldEffectiveFrontOpaque;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;

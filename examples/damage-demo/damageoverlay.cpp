@@ -42,6 +42,30 @@ void DamageOverlay::setFrames(const QVariantList &frames)
     update();
 }
 
+void DamageOverlay::setFlushFrames(const QVariantList &frames)
+{
+    if (m_flushFrames == frames)
+        return;
+    m_flushFrames = frames;
+    if (!m_flushFrames.isEmpty() && m_displayMode != 0)
+        m_repaintTimer.start();
+    emit flushFramesChanged();
+    update();
+}
+
+void DamageOverlay::setDisplayMode(int mode)
+{
+    mode = qBound(0, mode, 2);
+    if (m_displayMode == mode)
+        return;
+    m_displayMode = mode;
+    if ((m_displayMode != 1 && !m_frames.isEmpty())
+            || (m_displayMode != 0 && !m_flushFrames.isEmpty()))
+        m_repaintTimer.start();
+    emit displayModeChanged();
+    update();
+}
+
 void DamageOverlay::setHistoryDuration(int duration)
 {
     duration = qMax(100, duration);
@@ -60,6 +84,17 @@ void DamageOverlay::setRefreshRate(int refreshRate)
     m_refreshRate = refreshRate;
     m_repaintTimer.setInterval(refreshInterval(m_refreshRate));
     emit refreshRateChanged();
+}
+
+void DamageOverlay::setHoldCurrent(bool hold)
+{
+    if (m_holdCurrent == hold)
+        return;
+    m_holdCurrent = hold;
+    if (m_holdCurrent)
+        m_repaintTimer.stop();
+    emit holdCurrentChanged();
+    update();
 }
 
 void DamageOverlay::paintRects(QPainter *painter, const QVariantList &rects,
@@ -101,29 +136,41 @@ void DamageOverlay::paintRects(QPainter *painter, const QVariantList &rects,
     painter->restore();
 }
 
-void DamageOverlay::paint(QPainter *painter)
+bool DamageOverlay::paintSeries(QPainter *painter, const QVariantList &frames,
+                                const QColor &newest, const QColor &oldest, qint64 now)
 {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const QColor newest(232, 62, 78, 110);
-    const QColor oldest(45, 196, 112, 65);
+    if (frames.isEmpty())
+        return false;
     bool hasVisibleFrame = false;
-
-    // Hue is based only on frame distance from the newest damage. Time controls
-    // expiration, but never changes a frame's color.
-    const qsizetype newestIndex = m_frames.size() - 1;
+    const qsizetype newestIndex = frames.size() - 1;
     constexpr qreal colorSteps = 7.0;
-    for (qsizetype index = 0; index < m_frames.size(); ++index) {
-        const QVariantMap frame = m_frames.at(index).toMap();
+    for (qsizetype index = 0; index < frames.size(); ++index) {
+        const QVariantMap frame = frames.at(index).toMap();
         const qint64 timestamp = frame.value(QStringLiteral("timestamp")).toLongLong();
         const qint64 age = qMax<qint64>(0, now - timestamp);
-        if (age >= m_historyDuration)
+        if (age >= m_historyDuration && !(m_holdCurrent && index == newestIndex))
             continue;
         hasVisibleFrame = true;
         const qreal progress = qMin(1.0, qreal(newestIndex - index) / colorSteps);
         paintRects(painter, frame.value(QStringLiteral("rects")).toList(),
                    interpolateColor(newest, oldest, progress));
     }
+    return hasVisibleFrame;
+}
 
-    if (!hasVisibleFrame)
+void DamageOverlay::paint(QPainter *painter)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool hasVisibleFrame = false;
+    if (m_displayMode != 1)
+        hasVisibleFrame |= paintSeries(painter, m_frames,
+                                       QColor(232, 62, 78, 110),
+                                       QColor(45, 196, 112, 65), now);
+    if (m_displayMode != 0)
+        hasVisibleFrame |= paintSeries(painter, m_flushFrames,
+                                       QColor(156, 39, 176, 110),
+                                       QColor(255, 193, 7, 70), now);
+
+    if (!hasVisibleFrame || m_holdCurrent)
         m_repaintTimer.stop();
 }
