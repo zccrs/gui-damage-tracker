@@ -1439,21 +1439,42 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "可见区域为空"; color: win.mutedColor }
+                            Label { text: "可见区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: win.sel.visibleRegionEmpty !== undefined
-                                      ? (win.sel.visibleRegionEmpty ? "是（被遮挡）" : "否") : "—"
-                                color: win.sel.visibleRegionEmpty ? "#e57373" : "#66bb6a"
+                                text: {
+                                    var r = win.sel.visibleRegion
+                                    if (!r) return "—"
+                                    if (r.width === 0 || r.height === 0) return "空（被遮挡）"
+                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
+                                }
+                                color: win.sel.visibleRegion && win.sel.visibleRegion.width === 0 ? "#e57373" : "#66bb6a"
                             }
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "不透明区域为空"; color: win.mutedColor }
+                            Label { text: "不透明区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: win.sel.opaqueRegionEmpty !== undefined
-                                      ? (win.sel.opaqueRegionEmpty ? "是" : "否") : "—"
+                                text: {
+                                    var r = win.sel.opaqueRegion
+                                    if (!r) return "—"
+                                    if (r.width === 0 || r.height === 0) return "空"
+                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
+                                }
+                                color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "世界包围盒"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                text: {
+                                    var r = win.sel.worldBounds
+                                    if (!r) return "—"
+                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
+                                }
                                 color: win.textColor
                             }
                         }
@@ -1463,9 +1484,9 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 text: {
-                                    var b = win.sel.subtreeBounds
-                                    if (!b) return "—"
-                                    return b.width + "x" + b.height
+                                    var r = win.sel.subtreeBounds
+                                    if (!r) return "—"
+                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
                                 }
                                 color: win.textColor
                             }

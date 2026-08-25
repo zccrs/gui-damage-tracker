@@ -1161,8 +1161,9 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("name"), m_displayNames.value(n->id(), n->name()));
     p.insert(QStringLiteral("type"), typeString(n->type()));
     p.insert(QStringLiteral("hasContent"), n->hasContent());
-    p.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
-    p.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
+    p.insert(QStringLiteral("visibleRegion"), n->visibleRegion().boundingRect());
+    p.insert(QStringLiteral("opaqueRegion"), n->worldOpaqueRegion().boundingRect());
+    p.insert(QStringLiteral("worldBounds"), QRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), QRect(n->subtreeBounds()));
     p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
