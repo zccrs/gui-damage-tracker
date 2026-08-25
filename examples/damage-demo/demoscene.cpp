@@ -1046,11 +1046,11 @@ void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *pa
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
+        v.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
+        v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
+        v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
+        v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
         const QColor c = m_decor.value(n->id()).color;
-        v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
-        v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
-        visual->append(v);
     }
     for (Node *c = n->firstChild(); c; c = c->nextSibling())
         collectVisualOnly(c, visual, paintOrder);
@@ -1134,10 +1134,11 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
+        v.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
+        v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
+        v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
+        v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
         const QColor c = m_decor.value(n->id()).color;
-        v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
-        v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
         v.insert(QStringLiteral("hasContent"), n->hasContent());
     }
@@ -1159,8 +1160,11 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("id"), n->id());
     p.insert(QStringLiteral("name"), m_displayNames.value(n->id(), n->name()));
     p.insert(QStringLiteral("type"), typeString(n->type()));
-    p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
+    p.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
+    p.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
+    p.insert(QStringLiteral("subtreeBounds"), QRect(n->subtreeBounds()));
+    p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);
     p.insert(QStringLiteral("isTransform"), n->toTransform() != nullptr);
