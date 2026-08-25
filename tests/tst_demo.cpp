@@ -82,6 +82,12 @@ void tst_Demo::activatingNodeRaisesItToTop()
     DemoScene scene;
     const quint64 back = scene.treeNodes().at(1).toMap()
                              .value(QStringLiteral("id")).toULongLong();
+    const quint64 front = scene.treeNodes().at(2).toMap()
+                              .value(QStringLiteral("id")).toULongLong();
+
+    scene.setSelectedId(back);
+    QCOMPARE(scene.treeNodes().at(1).toMap().value(QStringLiteral("id")).toULongLong(), back);
+    QCOMPARE(scene.treeNodes().at(2).toMap().value(QStringLiteral("id")).toULongLong(), front);
 
     scene.activateNode(back);
 

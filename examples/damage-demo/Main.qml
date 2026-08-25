@@ -674,6 +674,10 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                onDoubleClicked: function(mouse) {
+                                    if (mouse.button === Qt.LeftButton && !win.treeDragging)
+                                        scene.activateNode(modelData.id)
+                                }
                                 onCanceled: {
                                     win.resetTreeDrag()
                                     endUserInteraction()
@@ -881,7 +885,7 @@ ApplicationWindow {
                                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         onPressed: function(mouse) {
                                             if (mouse.button === Qt.LeftButton) {
-                                                scene.activateNode(model.id)
+                                                scene.selectedId = model.id
                                                 isDragging = true
                                                 interactionStarted = false
                                                 var p = mapToItem(canvas, mouse.x, mouse.y)
@@ -925,6 +929,17 @@ ApplicationWindow {
                                                 scene.finishSelectedMove()
                                                 endUserInteraction()
                                             }
+                                        }
+                                        onDoubleClicked: function(mouse) {
+                                            if (mouse.button !== Qt.LeftButton)
+                                                return
+                                            if (interactionStarted) {
+                                                interactionStarted = false
+                                                scene.finishSelectedMove()
+                                                endUserInteraction()
+                                            }
+                                            isDragging = false
+                                            scene.activateNode(model.id)
                                         }
                                     }
                                 }
