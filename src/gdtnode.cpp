@@ -315,7 +315,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                           QRegion &worldFrontOpaque)
 {
     if (Q_UNLIKELY(!m_visible)) {
-        m_visibleRegion = {};
+        m_worldVisibleRegion = {};
         return;
     }
 
@@ -323,7 +323,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     if (Q_LIKELY(!outputRect.isEmpty()) && Q_LIKELY(!m_subtreeAABB.isEmpty())) {
         const QRect outputSubtreeAABB = mapOuter(worldToOutput, QRectF(m_subtreeAABB));
         if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect))) {
-            m_visibleRegion = {};
+            m_worldVisibleRegion = {};
             return;
         }
     }
@@ -366,13 +366,13 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     }
 
     if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
-        m_visibleRegion = QRegion(m_worldBounds);
+        m_worldVisibleRegion = QRegion(m_worldBounds);
     } else {
         const QRect frontAABB = worldFrontOpaque.boundingRect();
         if (Q_LIKELY(!frontAABB.intersects(m_worldBounds))) {
-            m_visibleRegion = QRegion(m_worldBounds);
+            m_worldVisibleRegion = QRegion(m_worldBounds);
         } else {
-            m_visibleRegion = QRegion(m_worldBounds) - worldFrontOpaque;
+            m_worldVisibleRegion = QRegion(m_worldBounds) - worldFrontOpaque;
         }
     }
 

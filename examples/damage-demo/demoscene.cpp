@@ -1046,7 +1046,7 @@ void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *pa
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
-        v.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
+        v.insert(QStringLiteral("worldVisibleRegionEmpty"), n->worldVisibleRegion().isEmpty());
         v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
         v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
@@ -1134,7 +1134,7 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
-        v.insert(QStringLiteral("visibleRegionEmpty"), n->visibleRegion().isEmpty());
+        v.insert(QStringLiteral("worldVisibleRegionEmpty"), n->worldVisibleRegion().isEmpty());
         v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
         v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
@@ -1162,7 +1162,7 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("type"), typeString(n->type()));
     p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
-    p.insert(QStringLiteral("visibleRegion"), n->visibleRegion().boundingRect());
+    p.insert(QStringLiteral("worldVisibleRegion"), n->worldVisibleRegion().boundingRect());
     p.insert(QStringLiteral("opaqueRegion"), n->worldOpaqueRegion().boundingRect());
     p.insert(QStringLiteral("worldBounds"), QRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), QRect(n->subtreeBounds()));

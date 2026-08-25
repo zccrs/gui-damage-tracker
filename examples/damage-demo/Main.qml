@@ -1443,12 +1443,12 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 text: {
-                                    var r = win.sel.visibleRegion
+                                    var r = win.sel.worldVisibleRegion
                                     if (!r) return "—"
                                     if (r.width === 0 || r.height === 0) return "空（被遮挡）"
                                     return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
                                 }
-                                color: win.sel.visibleRegion && win.sel.visibleRegion.width === 0 ? "#e57373" : "#66bb6a"
+                                color: win.sel.worldVisibleRegion && win.sel.worldVisibleRegion.width === 0 ? "#e57373" : "#66bb6a"
                             }
                         }
                         RowLayout {

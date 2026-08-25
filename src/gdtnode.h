@@ -95,7 +95,7 @@ public:
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
-    QRegion visibleRegion() const { return m_visibleRegion; }
+    QRegion worldVisibleRegion() const { return m_visibleRegion; }
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
