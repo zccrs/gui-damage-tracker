@@ -311,22 +311,26 @@ void Node::collectWorldDamage(QRegion &acc)
 
 void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                           QRegion &screen, const QTransform &worldToOutput,
-                          const QRect &outputRect)
+                          const QRect &outputRect,
+                          QRegion &worldFrontOpaque)
 {
     if (Q_UNLIKELY(!m_visible)) {
+        m_visibleRegion = {};
         return;
     }
 
     // Subtree AABB culling: skip entire off-screen subtrees.
     if (Q_LIKELY(!outputRect.isEmpty()) && Q_LIKELY(!m_subtreeAABB.isEmpty())) {
         const QRect outputSubtreeAABB = mapOuter(worldToOutput, QRectF(m_subtreeAABB));
-        if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect)))
+        if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect))) {
+            m_visibleRegion = {};
             return;
+        }
     }
 
     for (Node *child = m_lastChild; child; child = child->m_prev) {
         child->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                              worldToOutput, outputRect);
+                              worldToOutput, outputRect, worldFrontOpaque);
     }
 
     const bool usableTransform = Q_LIKELY(worldToOutput.isAffine() && worldToOutput.isInvertible());
@@ -361,11 +365,21 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         return;
     }
 
+    if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
+        m_visibleRegion = QRegion(m_worldBounds);
+    } else {
+        const QRect frontAABB = worldFrontOpaque.boundingRect();
+        if (Q_LIKELY(!frontAABB.intersects(m_worldBounds))) {
+            m_visibleRegion = QRegion(m_worldBounds);
+        } else {
+            m_visibleRegion = QRegion(m_worldBounds) - worldFrontOpaque;
+        }
+    }
+
     // Fast path: damage-free, non-opaque, non-exposed displayable node.
-    // No contribution to screen/remaining/exposed/frontOpaque — only need
-    // culled/fullyOccluded/occludedRegion for the view. Uses QRect when the
-    // front-opaque AABB doesn't intersect (avoids QRegion heap ops).
     if (Q_LIKELY(!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty())) {
+        // Still need to accumulate world opaque for culling siblings behind
+        worldFrontOpaque += m_worldOpaque;
         return;
     }
 
@@ -450,6 +464,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                 exposed += visibleLocalDamage;
         }
         frontOpaque += opaque;
+        worldFrontOpaque += m_worldOpaque;
     } else {
         if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
             exposed += visibleLocalDamage;

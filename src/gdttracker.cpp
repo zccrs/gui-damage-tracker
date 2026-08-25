@@ -48,12 +48,13 @@ void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
         remaining &= outRect;
 
     QRegion frontOpaque;
+    QRegion worldFrontOpaque;
     QRegion exposed;
     QRegion screen;
 
     if (m_root) {
         m_root->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                               w2o, outRect);
+                               w2o, outRect, worldFrontOpaque);
     }
 
     if (!outRect.isEmpty())
@@ -103,11 +104,8 @@ void Tracker::commit(Viewport &vp)
         vp.m_accumulatedDamage += full;
         if (!vp.outputRect().isEmpty())
             vp.m_accumulatedDamage &= vp.outputRect();
-        // Still need to run occlusion if tree also has damage
-        if (!treeDirty) {
-            m_committedViewports.append(&vp);
+        if (!treeDirty)
             return;
-        }
     }
 
     // Nothing changed
@@ -116,7 +114,6 @@ void Tracker::commit(Viewport &vp)
 
     QRegion worldDamage = m_worldDamage;
     computeViewport(vp, worldDamage);
-    m_committedViewports.append(&vp);
 }
 
 void Tracker::finishFrame()
@@ -127,9 +124,6 @@ void Tracker::finishFrame()
         return;
     if (m_root->isDirty())
         m_root->commitState();
-    for (Viewport *vp : std::as_const(m_committedViewports))
-        vp->finishFrame();
-    m_committedViewports.clear();
 }
 
 Tracker::Tracker(Node *root)

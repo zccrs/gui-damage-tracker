@@ -77,7 +77,6 @@ private:
     Node *m_root = nullptr;
     QRegion m_worldDamage;
     Phase m_phase = Phase::Idle;
-    QVector<Viewport *> m_committedViewports;
 };
 
 } // namespace Gdt

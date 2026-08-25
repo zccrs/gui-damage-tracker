@@ -95,6 +95,7 @@ public:
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
+    QRegion visibleRegion() const { return m_visibleRegion; }
     QRegion ownDamage() const { return m_ownDamage; }
     QRegion inducedDamage() const { return m_inducedDamage; }
     DirtyBits dirty() const { return m_dirty; }
@@ -116,10 +117,9 @@ private:
     void collectWorldDamage(QRegion &acc);
     void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                         QRegion &screen, const QTransform &worldToOutput,
-                        const QRect &outputRect);
+                        const QRect &outputRect, QRegion &worldFrontOpaque);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
-
     Type m_type;
     quint64 m_id = 0;
     QString m_name;
@@ -142,7 +142,7 @@ private:
     QRegion m_ownDamage;
     QRegion m_inducedDamage;
     QRegion m_pendingRemovedDamage;
-
+    QRegion m_visibleRegion;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
