@@ -50,6 +50,23 @@ static QVariantList regionToRects(const QRegion &region)
     }
     return list;
 }
+static QString formatRect(const QRect &r)
+{
+    return QStringLiteral("(%1,%2) %3x%4")
+        .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+}
+
+static QString formatRegion(const QRegion &region)
+{
+    if (region.isEmpty())
+        return QStringLiteral("空");
+    QStringList parts;
+    parts.reserve(region.rectCount());
+    for (const QRect &r : region)
+        parts.append(formatRect(r));
+    return parts.join(QStringLiteral(" ∪ "));
+}
+
 
 DemoScene::DemoScene(QObject *parent)
     : QObject(parent)
@@ -1051,6 +1068,10 @@ void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *pa
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
         v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
         const QColor c = m_decor.value(n->id()).color;
+        v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
+        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
+        v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
+        visual->append(v);
     }
     for (Node *c = n->firstChild(); c; c = c->nextSibling())
         collectVisualOnly(c, visual, paintOrder);
@@ -1139,8 +1160,10 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
         v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
         const QColor c = m_decor.value(n->id()).color;
+        v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
+        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
+        v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
-        v.insert(QStringLiteral("hasContent"), n->hasContent());
     }
     for (Node *c = n->firstChild(); c; c = c->nextSibling())
         collectVisual(c, visual, tree, depth + 1, paintOrder);
@@ -1162,10 +1185,10 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("type"), typeString(n->type()));
     p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
-    p.insert(QStringLiteral("worldVisibleRegion"), n->worldVisibleRegion().boundingRect());
-    p.insert(QStringLiteral("opaqueRegion"), n->worldOpaqueRegion().boundingRect());
-    p.insert(QStringLiteral("worldBounds"), QRect(n->worldBounds()));
-    p.insert(QStringLiteral("subtreeBounds"), QRect(n->subtreeBounds()));
+    p.insert(QStringLiteral("worldVisibleRegion"), formatRegion(n->worldVisibleRegion()));
+    p.insert(QStringLiteral("worldOpaqueRegion"), formatRegion(n->worldOpaqueRegion()));
+    p.insert(QStringLiteral("worldBounds"), formatRect(n->worldBounds()));
+    p.insert(QStringLiteral("subtreeBounds"), formatRect(n->subtreeBounds()));
     p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);

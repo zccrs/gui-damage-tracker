@@ -1442,13 +1442,9 @@ ApplicationWindow {
                             Label { text: "可见区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: {
-                                    var r = win.sel.worldVisibleRegion
-                                    if (!r) return "—"
-                                    if (r.width === 0 || r.height === 0) return "空（被遮挡）"
-                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
-                                }
-                                color: win.sel.worldVisibleRegion && win.sel.worldVisibleRegion.width === 0 ? "#e57373" : "#66bb6a"
+                                wrapMode: Text.Wrap
+                                text: win.sel.worldVisibleRegion || "—"
+                                color: win.sel.worldVisibleRegion === "空" ? "#e57373" : "#66bb6a"
                             }
                         }
                         RowLayout {
@@ -1456,12 +1452,8 @@ ApplicationWindow {
                             Label { text: "不透明区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: {
-                                    var r = win.sel.opaqueRegion
-                                    if (!r) return "—"
-                                    if (r.width === 0 || r.height === 0) return "空"
-                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
-                                }
+                                wrapMode: Text.Wrap
+                                text: win.sel.worldOpaqueRegion || "—"
                                 color: win.textColor
                             }
                         }
@@ -1470,11 +1462,7 @@ ApplicationWindow {
                             Label { text: "世界包围盒"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: {
-                                    var r = win.sel.worldBounds
-                                    if (!r) return "—"
-                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
-                                }
+                                text: win.sel.worldBounds || "—"
                                 color: win.textColor
                             }
                         }
@@ -1483,11 +1471,7 @@ ApplicationWindow {
                             Label { text: "子树包围盒"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                text: {
-                                    var r = win.sel.subtreeBounds
-                                    if (!r) return "—"
-                                    return "(" + r.x + "," + r.y + ") " + r.width + "x" + r.height
-                                }
+                                text: win.sel.subtreeBounds || "—"
                                 color: win.textColor
                             }
                         }

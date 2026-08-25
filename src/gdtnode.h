@@ -95,7 +95,7 @@ public:
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
-    QRegion worldVisibleRegion() const { return m_visibleRegion; }
+    QRegion worldVisibleRegion() const { return m_worldVisibleRegion; }
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
@@ -140,7 +140,7 @@ private:
     QRegion m_ownDamage;
     QRegion m_inducedDamage;
     QRegion m_pendingRemovedDamage;
-    QRegion m_visibleRegion;
+    QRegion m_worldVisibleRegion;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
