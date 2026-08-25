@@ -49,7 +49,7 @@ public:
         m_vps[0].finishFrame(); // prime: clear dirty from set calls
         prepareFrame();
         commit(m_vps[0]);
-        QRegion result = m_vps[0].accumulatedDamage;
+        QRegion result = m_vps[0].accumulatedDamage();
         finishFrame();
         return result;
     }
@@ -61,7 +61,7 @@ public:
         m_vps[0].finishFrame(); // prime: clear dirty from set calls
         prepareFrame();
         commit(m_vps[0]);
-        QRegion result = m_vps[0].accumulatedDamage;
+        QRegion result = m_vps[0].accumulatedDamage();
         finishFrame();
         return result;
     }
@@ -725,12 +725,12 @@ void tst_Gdt::viewportTransformMapsDamage()
 
     QVector<Tracker::Viewport> vps{viewport};
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion(20, 10, 8, 6));
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(20, 10, 8, 6));
     tracker.finishFrame();
 
     g->markContentDirty(QRect(11, 6, 1, 1));
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion(22, 12, 2, 2));
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(22, 12, 2, 2));
     tracker.finishFrame();
 }
 void tst_Gdt::viewportTransformsCullIndependently()
@@ -746,8 +746,8 @@ void tst_Gdt::viewportTransformsCullIndependently()
         {QRect(0, 0, 50, 50), QTransform::fromTranslate(-100, 0)},
     };
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion());
-    COMPARE_REGION(vps[1].accumulatedDamage, QRegion(0, 0, 20, 20));
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion());
+    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(0, 0, 20, 20));
     tracker.finishFrame();
 }
 
@@ -1198,14 +1198,14 @@ void tst_Gdt::twoViewportsIndependentDamage()
         {QRect(100, 0, 50, 50)},
     };
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion(0, 0, 40, 40));
-    COMPARE_REGION(vps[1].accumulatedDamage, QRegion(100, 0, 40, 40));
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(0, 0, 40, 40));
+    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(100, 0, 40, 40));
     tracker.finishFrame();
 
     left->markContentDirty(QRect(1, 1, 2, 2));
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion(1, 1, 2, 2));
-    COMPARE_REGION(vps[1].accumulatedDamage, QRegion());
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(1, 1, 2, 2));
+    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion());
     tracker.finishFrame();
 }
 
@@ -1243,8 +1243,8 @@ void tst_Gdt::twoViewportsSingleCommitKeepsBoth()
         {QRect(80, 0, 80, 40)},
     };
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion(50, 0, 30, 20));
-    COMPARE_REGION(vps[1].accumulatedDamage, QRegion(80, 0, 30, 20));
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(50, 0, 30, 20));
+    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(80, 0, 30, 20));
     tracker.finishFrame();
 }
 
@@ -1263,8 +1263,8 @@ void tst_Gdt::twoViewportsIdempotent()
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
     tracker.finishFrame();
     for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage, QRegion());
-    COMPARE_REGION(vps[1].accumulatedDamage, QRegion());
+    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion());
+    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion());
     tracker.finishFrame();
 }
 

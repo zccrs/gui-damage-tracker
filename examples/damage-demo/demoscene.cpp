@@ -945,14 +945,6 @@ void DemoScene::updateDamage(bool rebuildScene)
     if (m_vpA.rotation != 0.0)
         t0.rotate(m_vpA.rotation, Qt::ZAxis);
     vp0.setWorldToOutput(t0);
-    if (m_vpA.swapchainEnabled) {
-        vp0.accumulatedDamage = QRegion(m_vpA.outputRect.x() + m_vpA.swapchainDamageRect.x(),
-                             m_vpA.outputRect.y() + m_vpA.swapchainDamageRect.y(),
-                             m_vpA.swapchainDamageRect.width(),
-                             m_vpA.swapchainDamageRect.height());
-    } else {
-        vp0.accumulatedDamage = m_injectedBufferDamageA;
-    }
 
     Tracker::Viewport vp1;
     vp1.setOutputRect(m_vpB.outputRect);
@@ -967,8 +959,8 @@ void DemoScene::updateDamage(bool rebuildScene)
     QVector<Tracker::Viewport> vps{vp0, vp1};
     for (auto &vp : vps) vp.finishFrame();
     m_tracker.prepareFrame(); for (auto &vp : vps) m_tracker.commit(vp);
-    const QRegion damageA = vps[0].accumulatedDamage;
-    const QRegion damageB = vps[1].accumulatedDamage;
+    const QRegion damageA = vps[0].accumulatedDamage();
+    const QRegion damageB = vps[1].accumulatedDamage();
     m_tracker.finishFrame();
     m_damageRects = regionToRects(damageA);
     m_damageRectsB = regionToRects(damageB);

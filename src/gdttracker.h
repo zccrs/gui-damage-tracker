@@ -29,7 +29,7 @@ public:
 
     bool isDirty() const { return m_dirty; }
 
-    QRegion accumulatedDamage;
+    QRegion accumulatedDamage() const { return m_accumulatedDamage; }
 
     // Called by Tracker::finishFrame() — syncs committed state, clears dirty.
     void finishFrame();
@@ -42,6 +42,7 @@ private:
     QRect m_committedOutputRect;
     QTransform m_committedWorldToOutput;
     bool m_dirty = false;
+    QRegion m_accumulatedDamage;
 };
 
 class Tracker

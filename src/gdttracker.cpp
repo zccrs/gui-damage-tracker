@@ -27,7 +27,7 @@ void Viewport::finishFrame()
     m_committedOutputRect = m_outputRect;
     m_committedWorldToOutput = m_worldToOutput;
     m_dirty = false;
-    accumulatedDamage = {};
+    m_accumulatedDamage = {};
 }
 
 // --- Tracker ---
@@ -60,9 +60,9 @@ void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
         remaining &= outRect;
     screen += remaining;
 
-    vp.accumulatedDamage += screen;
+    vp.m_accumulatedDamage += screen;
     if (!outRect.isEmpty())
-        vp.accumulatedDamage &= outRect;
+        vp.m_accumulatedDamage &= outRect;
 }
 
 void Tracker::prepareFrame()
@@ -100,9 +100,9 @@ void Tracker::commit(Viewport &vp)
             full = QRegion(QRect(-100000, -100000, 200000, 200000));
         if (!vp.outputRect().isEmpty())
             full &= vp.outputRect();
-        vp.accumulatedDamage += full;
+        vp.m_accumulatedDamage += full;
         if (!vp.outputRect().isEmpty())
-            vp.accumulatedDamage &= vp.outputRect();
+            vp.m_accumulatedDamage &= vp.outputRect();
         // Still need to run occlusion if tree also has damage
         if (!treeDirty) {
             m_committedViewports.append(&vp);
