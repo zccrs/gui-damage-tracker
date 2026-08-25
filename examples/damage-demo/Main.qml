@@ -256,9 +256,7 @@ ApplicationWindow {
         onTriggered: scene.addBackdrop()
     }
     Action {
-        id: addRendererAction
         text: "自定义渲染节点"
-        onTriggered: scene.addRenderer()
     }
     Action {
         id: addGroupAction
@@ -303,7 +301,6 @@ ApplicationWindow {
         MenuItem { action: addGeometryAction }
         MenuItem { action: addTransformAction }
         MenuItem { action: addBackdropAction }
-        MenuItem { action: addRendererAction }
         MenuSeparator {}
         MenuItem { action: addGroupAction }
     }
@@ -316,7 +313,6 @@ ApplicationWindow {
             MenuItem { action: addGeometryAction }
             MenuItem { action: addTransformAction }
             MenuItem { action: addBackdropAction }
-            MenuItem { action: addRendererAction }
             MenuItem { action: addGroupAction }
         }
         MenuItem { action: moveUpAction }
@@ -1075,7 +1071,6 @@ ApplicationWindow {
                             color: scene.selectionType === 2 ? "#0284c7"
                                  : win.sel.type === "Geometry" ? "#596de8"
                                  : win.sel.type === "Backdrop" ? "#0891b2"
-                                 : win.sel.type === "Renderer" ? "#ff7043"
                                  : win.sel.type === "Transform" ? "#d28a2d" : "#556176"
                             Label {
                                 anchors.centerIn: parent

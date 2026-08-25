@@ -55,7 +55,7 @@ static Node *buildRealisticTree(int totalNodes, std::vector<GeometryNode *> *out
                 auto *bg = new BackdropNode();
                 bg->setName(QStringLiteral("backdrop_%1").arg(created));
                 bg->setBoundingRect(QRectF(10 * i, 10 * i, 200, 150));
-                bg->setBackdropExpansion(16);
+                bg->setExpansion(16);
                 layer->appendChild(bg);
                 outBackdrops->push_back(bg);
                 created++;
@@ -84,7 +84,7 @@ static QVector<Tracker::Viewport> createViewports(int count)
     vps.reserve(count);
     for (int i = 0; i < count; ++i) {
         Tracker::Viewport vp;
-        vp.outputRect = QRect(0, 0, 1920, 1080);
+        vp.setOutputRect(QRect(0, 0, 1920, 1080));
         QTransform t;
         t.translate(-i * 1920.0, 0);
         if (i == 1) {
@@ -92,7 +92,7 @@ static QVector<Tracker::Viewport> createViewports(int count)
         } else if (i == 2) {
             t.rotate(90, Qt::ZAxis);
         }
-        vp.worldToOutput = t;
+        vp.setWorldToOutput(t);
         vps.push_back(vp);
     }
     return vps;
@@ -117,21 +117,17 @@ static BenchmarkResult runBenchmark(const QString &category, const QString &scen
     Tracker tracker(root.get());
 
     auto viewports = createViewports(viewportCount);
-    // warm-up & initial commit (three-phase)
-    tracker.prepareFrame();
-    for (auto &vp : viewports)
-        tracker.renderViewport(vp);
-    tracker.finishFrame();
+    // warm-up & initial commit
+    for (auto &vp : viewports) vp.finishFrame();
+    tracker.prepareFrame(); for (auto &vp : viewports) tracker.commit(vp); tracker.finishFrame();
 
     QElapsedTimer timer;
     timer.start();
 
     for (int i = 0; i < iterations; ++i) {
         prepareIteration(tracker, root.get(), geos, transforms, backdrops, i);
-        tracker.prepareFrame();
-        for (auto &vp : viewports)
-            tracker.renderViewport(vp);
-        tracker.finishFrame();
+        for (auto &vp : viewports) vp.finishFrame();
+    tracker.prepareFrame(); for (auto &vp : viewports) tracker.commit(vp); tracker.finishFrame();
     }
 
     const qint64 elapsedNs = timer.nsecsElapsed();

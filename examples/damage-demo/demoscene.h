@@ -91,7 +91,6 @@ public:
     Q_INVOKABLE void addTransform();
     Q_INVOKABLE void addGeometry();
     Q_INVOKABLE void addBackdrop();
-    Q_INVOKABLE void addRenderer();
     Q_INVOKABLE void removeSelected();
     Q_INVOKABLE void raiseSelected();
     Q_INVOKABLE void lowerSelected();
@@ -103,7 +102,7 @@ public:
     Q_INVOKABLE void setScaleSelected(qreal sx, qreal sy);
     Q_INVOKABLE void setFullyOpaqueSelected(bool opaque);
     Q_INVOKABLE void setExpansionSelected(int px);
-    Q_INVOKABLE void setClipExpansionSelected(bool clip);
+    Q_INVOKABLE void setClipSelected(bool clip);
     Q_INVOKABLE void markSelectedContentDirty();
     Q_INVOKABLE void markSelectedContentDirtyAt(qreal x, qreal y, qreal w, qreal h);
     Q_INVOKABLE void moveSelectedBy(qreal dx, qreal dy);

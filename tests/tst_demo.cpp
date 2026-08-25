@@ -123,7 +123,7 @@ void tst_Demo::builtInScenesAnimateAndAllowEditing()
 {
     DemoScene scene;
     scene.loadDemoScene(QStringLiteral("content"));
-    QCOMPARE(scene.demoScenes().size(), 7);
+    QCOMPARE(scene.demoScenes().size(), 6);
     QCOMPARE(scene.demoSceneName(), QStringLiteral("content"));
     QVERIFY(!scene.selectedProps().isEmpty());
     const qsizetype initialFrames = scene.damageFrames().size();

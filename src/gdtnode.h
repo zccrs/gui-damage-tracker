@@ -16,38 +16,10 @@ namespace Gdt {
 class Node;
 class Tracker;
 struct Viewport;
-struct ViewportOcclusionState;
 class TransformNode;
 class GeometryNode;
+class CustomNode;
 class BackdropNode;
-class RendererNode;
-// Viewport-attached data owned by Viewport, linked onto Node.
-struct NodeViewportData {
-    QRegion visibleDamage;
-    QRegion occludedRegion;
-    QRect outputBounds;          // Node's bounding rect in this viewport's output coordinates
-    bool fullyOccluded = false;
-    bool culled = false;
-
-    const Viewport *viewport = nullptr;
-    Node *node = nullptr;
-    void *userData = nullptr;    // Opaque pointer for external use (e.g., batch pointer)
-    NodeViewportData *nextOnNode = nullptr;
-    NodeViewportData *prevOnNode = nullptr;
-};
-using NodeView = NodeViewportData;
-
-// Context passed to RendererNode's custom damage calculation function.
-struct RenderContext {
-    const Viewport *viewport = nullptr;
-    QRegion overallDamage;              // Damage accumulated before this node paints
-    QTransform worldTransform;          // Node's transform in world space
-    QTransform renderMatrix;            // Final composite matrix (worldToOutput * worldTransform)
-    QRectF boundingRect;                // Node's local bounding rectangle
-    QRect worldBounds;                  // Node's world bounding rectangle
-    QRect outputBounds;                 // Node's output bounding rectangle in current viewport
-    RendererNode *node = nullptr;       // Pointer to the node being evaluated
-};
 
 // Scene-graph node used for GUI damage precomputation.
 //
@@ -63,8 +35,7 @@ public:
         Basic = 0,     // grouping only
         Transform,     // local 2D matrix applied to descendants
         Geometry,      // visible content
-        Backdrop,      // visible; expands damage from content behind it
-        Renderer       // visible; dynamically computes damage via custom function
+        Custom,        // visible; generic custom opaque/damage processors
     };
     enum DirtyBit {
         DirtyMatrix      = 1 << 0,
@@ -90,12 +61,10 @@ public:
 
     TransformNode *toTransform();
     GeometryNode *toGeometry();
-    BackdropNode *toBackdrop();
-    RendererNode *toRenderer();
+    CustomNode *toCustom();
     const TransformNode *toTransform() const;
     const GeometryNode *toGeometry() const;
-    const BackdropNode *toBackdrop() const;
-    const RendererNode *toRenderer() const;
+    const CustomNode *toCustom() const;
 
     void setName(const QString &name) { m_name = name; }
     QString name() const { return m_name; }
@@ -128,14 +97,6 @@ public:
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
     QRegion ownDamage() const { return m_ownDamage; }
     QRegion inducedDamage() const { return m_inducedDamage; }
-    // Per-viewport attached data accessors (O(1) direct pointer or short list)
-    const NodeViewportData *viewportData(const Viewport *viewport = nullptr) const;
-    NodeViewportData *viewportData(const Viewport *viewport = nullptr);
-
-    QRegion visibleDamage(const Viewport *viewport = nullptr) const;
-    QRegion occludedRegion(const Viewport *viewport = nullptr) const;
-    bool isFullyOccluded(const Viewport *viewport = nullptr) const;
-    bool isCulled(const Viewport *viewport = nullptr) const;
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
@@ -152,14 +113,10 @@ private:
     void adopt(Node *child);
     void clearFrameDamageRecursive();
     void updateWorld(const QTransform &parentWorld, bool parentWorldChanged);
-    void collectBackdrop(QRegion &acc);
+    void collectWorldDamage(QRegion &acc);
     void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                         QRegion &screen, const QTransform &worldToOutput,
-                        const QRect &outputRect, const Viewport *viewport,
-                        const std::function<NodeViewportData *(Node *)> &dataFactory);
-    void applyOcclusionMulti(ViewportOcclusionState *states, int count,
-                             const QRegion &worldDamage,
-                             const std::function<NodeViewportData *(Node *, Viewport *)> &dataFactory);
+                        const QRect &outputRect);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
 
@@ -184,21 +141,12 @@ private:
     QRegion m_worldOpaque;
     QRegion m_ownDamage;
     QRegion m_inducedDamage;
-    QRegion m_visibleDamage;
-    QRegion m_occludedRegion;
     QRegion m_pendingRemovedDamage;
-    bool m_fullyOccluded = false;
-    bool m_culled = false;
 
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
-    NodeViewportData *m_viewportDataHead = nullptr;
 
-    friend struct Viewport;
-    friend struct NodeViewportData;
-    void attachViewportData(NodeViewportData *data);
-    void detachViewportData(NodeViewportData *data);
 
     static quint64 s_nextId;
 };
@@ -256,48 +204,76 @@ private:
     bool m_fullyOpaque = false;
 };
 
-// Displayable node that samples content behind it (blur, backdrop-filter,
-// WRenderBufferNode-style buffer). Backdrop damage intersecting the sample
-// area is dilated by backdropExpansion; clipping is optional.
-class BackdropNode : public GeometryNode
+// Context passed to CustomNode's damage processor callback.
+struct RenderContext {
+    const Viewport *viewport = nullptr;
+    QRegion overallDamage;              // Damage accumulated before this node paints
+    QTransform worldTransform;          // Node's transform in world space
+    QRectF boundingRect;                // Node's local bounding rectangle
+    QRect worldBounds;                  // Node's world bounding rectangle
+    QRect outputBounds;                 // Node's output bounding rectangle in current viewport
+};
+
+// Generic custom node: modifies opaque and damage regions via callbacks.
+// Has no built-in sampling geometry; the callbacks receive frontOpaque/leaked
+// and collectedDamage respectively and return the modified regions.
+class CustomNode : public GeometryNode
+{
+public:
+    CustomNode();
+protected:
+    explicit CustomNode(Type type);
+public:
+    using OpaqueProcessor = std::function<QRegion(const CustomNode *node,
+                                                  const QRegion &frontOpaque,
+                                                  const QRegion &leakedArea,
+                                                  const QTransform &worldTransform,
+                                                  const QRect &worldBounds)>;
+    using DamageProcessor = std::function<QRegion(const CustomNode *node,
+                                                  const QRegion &collectedDamage,
+                                                  const RenderContext &ctx)>;
+
+    void setOpaqueProcessor(OpaqueProcessor func);
+    OpaqueProcessor opaqueProcessor() const { return m_opaqueProcessor; }
+    void setDamageProcessor(DamageProcessor func);
+    DamageProcessor damageProcessor() const { return m_damageProcessor; }
+
+private:
+    friend class Node;
+    friend class Tracker;
+    OpaqueProcessor m_opaqueProcessor;
+    DamageProcessor m_damageProcessor;
+};
+
+// BackdropNode: convenience subclass of CustomNode that presets default
+// opaque/damage processors implementing classic backdrop blur dilation.
+// No hardcoded type dispatch — all logic flows through CustomNode's processors.
+class BackdropNode : public CustomNode
 {
 public:
     BackdropNode();
 
-    void setBackdropExpansion(const QMargins &margins);
-    void setBackdropExpansion(int px);
-    QMargins backdropExpansion() const { return m_expansion; }
+    void setExpansion(const QMargins &margins);
+    void setExpansion(int px);
+    QMargins expansion() const { return m_expansion; }
+    void setClip(bool clip);
+    bool clip() const { return m_clipExpansion; }
 
-    // When true (default), expanded damage is clipped to world bounds.
-    // When false, expansion may bleed outside the node (e.g. a halo).
-    void setClipExpansion(bool clip);
-    bool clipExpansion() const { return m_clipExpansion; }
+    static QRegion defaultDamageProcessor(const CustomNode *node,
+                                           const QRegion &collectedDamage,
+                                           const RenderContext &ctx);
+    static QRegion defaultOpaqueProcessor(const CustomNode *node,
+                                           const QRegion &frontOpaque,
+                                           const QRegion &leaked,
+                                           const QTransform &worldTransform,
+                                           const QRect &worldBounds);
 
 private:
     friend class Node;
-    friend class Tracker;
     QMargins m_expansion;
     bool m_clipExpansion = true;
 };
 
-// Displayable node that executes a custom damage calculation function.
-// When reached during damage propagation, it inspects the accumulated overall
-// damage and render matrices to compute the damage region it will induce.
-class RendererNode : public GeometryNode
-{
-public:
-    using DamageFunction = std::function<QRegion(const RenderContext &context)>;
-
-    RendererNode();
-
-    void setDamageFunction(DamageFunction func);
-    DamageFunction damageFunction() const { return m_damageFunc; }
-
-private:
-    friend class Node;
-    friend class Tracker;
-    DamageFunction m_damageFunc;
-};
 
 } // namespace Gdt
 

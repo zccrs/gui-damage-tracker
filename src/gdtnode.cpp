@@ -17,10 +17,8 @@ static QString typeName(Node::Type t)
         return QStringLiteral("Transform");
     case Node::Type::Geometry:
         return QStringLiteral("Geometry");
-    case Node::Type::Backdrop:
-        return QStringLiteral("Backdrop");
-    case Node::Type::Renderer:
-        return QStringLiteral("Renderer");
+    case Node::Type::Custom:
+        return QStringLiteral("Custom");
     }
     return QStringLiteral("?");
 }
@@ -33,9 +31,6 @@ Node::Node(Type type)
 
 Node::~Node()
 {
-    while (m_viewportDataHead)
-        detachViewportData(m_viewportDataHead);
-
     if (m_parent)
         m_parent->removeChild(this);
 
@@ -53,19 +48,14 @@ TransformNode *Node::toTransform()
 
 GeometryNode *Node::toGeometry()
 {
-    return (m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer)
+    return (m_type == Type::Geometry || m_type == Type::Custom)
         ? static_cast<GeometryNode *>(this)
         : nullptr;
 }
 
-BackdropNode *Node::toBackdrop()
+CustomNode *Node::toCustom()
 {
-    return m_type == Type::Backdrop ? static_cast<BackdropNode *>(this) : nullptr;
-}
-
-RendererNode *Node::toRenderer()
-{
-    return m_type == Type::Renderer ? static_cast<RendererNode *>(this) : nullptr;
+    return (m_type == Type::Custom) ? static_cast<CustomNode *>(this) : nullptr;
 }
 
 const TransformNode *Node::toTransform() const
@@ -75,100 +65,14 @@ const TransformNode *Node::toTransform() const
 
 const GeometryNode *Node::toGeometry() const
 {
-    return (m_type == Type::Geometry || m_type == Type::Backdrop || m_type == Type::Renderer)
+    return (m_type == Type::Geometry || m_type == Type::Custom)
         ? static_cast<const GeometryNode *>(this)
         : nullptr;
 }
 
-const BackdropNode *Node::toBackdrop() const
+const CustomNode *Node::toCustom() const
 {
-    return m_type == Type::Backdrop ? static_cast<const BackdropNode *>(this) : nullptr;
-}
-
-const RendererNode *Node::toRenderer() const
-{
-    return m_type == Type::Renderer ? static_cast<const RendererNode *>(this) : nullptr;
-}
-
-const NodeViewportData *Node::viewportData(const Viewport *viewport) const
-{
-    if (Q_UNLIKELY(!viewport))
-        return m_viewportDataHead;
-    for (const NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
-        if (curr->viewport == viewport)
-            return curr;
-    }
-    return nullptr;
-}
-
-NodeViewportData *Node::viewportData(const Viewport *viewport)
-{
-    if (Q_UNLIKELY(!viewport))
-        return m_viewportDataHead;
-    for (NodeViewportData *curr = m_viewportDataHead; curr; curr = curr->nextOnNode) {
-        if (curr->viewport == viewport)
-            return curr;
-    }
-    return nullptr;
-}
-
-void Node::attachViewportData(NodeViewportData *data)
-{
-    if (!data)
-        return;
-    if (data->node == this)
-        return;
-    if (data->node)
-        data->node->detachViewportData(data);
-
-    data->node = this;
-    data->nextOnNode = m_viewportDataHead;
-    data->prevOnNode = nullptr;
-    if (m_viewportDataHead)
-        m_viewportDataHead->prevOnNode = data;
-    m_viewportDataHead = data;
-}
-
-void Node::detachViewportData(NodeViewportData *data)
-{
-    if (!data || data->node != this)
-        return;
-
-    if (data->prevOnNode)
-        data->prevOnNode->nextOnNode = data->nextOnNode;
-    else
-        m_viewportDataHead = data->nextOnNode;
-
-    if (data->nextOnNode)
-        data->nextOnNode->prevOnNode = data->prevOnNode;
-
-    data->node = nullptr;
-    data->nextOnNode = nullptr;
-    data->prevOnNode = nullptr;
-}
-
-QRegion Node::visibleDamage(const Viewport *viewport) const
-{
-    const auto *d = viewportData(viewport);
-    return d ? d->visibleDamage : QRegion();
-}
-
-QRegion Node::occludedRegion(const Viewport *viewport) const
-{
-    const auto *d = viewportData(viewport);
-    return d ? d->occludedRegion : QRegion();
-}
-
-bool Node::isFullyOccluded(const Viewport *viewport) const
-{
-    const auto *d = viewportData(viewport);
-    return d ? d->fullyOccluded : false;
-}
-
-bool Node::isCulled(const Viewport *viewport) const
-{
-    const auto *d = viewportData(viewport);
-    return d ? d->culled : hasContent();
+    return (m_type == Type::Custom) ? static_cast<const CustomNode *>(this) : nullptr;
 }
 
 void Node::setVisible(bool visible)
@@ -305,10 +209,6 @@ void Node::clearFrameDamageRecursive()
 {
     m_ownDamage = {};
     m_inducedDamage = {};
-    m_visibleDamage = {};
-    m_occludedRegion = {};
-    m_fullyOccluded = false;
-    m_culled = false;
     for (Node *child = m_firstChild; child; child = child->m_next)
         child->clearFrameDamageRecursive();
 }
@@ -316,10 +216,6 @@ void Node::clearFrameDamageRecursive()
 void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
 {
     m_inducedDamage = {};
-    m_visibleDamage = {};
-    m_occludedRegion = {};
-    m_fullyOccluded = false;
-    m_culled = false;
     m_ownDamage = m_pendingRemovedDamage;
     m_pendingRemovedDamage = {};
 
@@ -385,62 +281,39 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
     m_subtreeAABB = subtree;
 }
 
-void Node::collectBackdrop(QRegion &acc)
+void Node::collectWorldDamage(QRegion &acc)
 {
     if (Q_UNLIKELY(!m_visible)) {
         acc += m_ownDamage;
         return;
     }
 
-    if (Q_UNLIKELY(m_type == Type::Backdrop)) {
-        auto *bg = static_cast<BackdropNode *>(this);
-        const QRect sample = m_worldBounds.marginsAdded(bg->m_expansion);
-        QRegion relevant = acc;
-        relevant &= sample;
-        m_inducedDamage = dilateRegion(relevant, bg->m_expansion);
-        if (bg->m_clipExpansion)
-            m_inducedDamage &= m_worldBounds;
-        else
-            m_inducedDamage &= m_worldBounds.marginsAdded(bg->m_expansion);
-        acc += m_inducedDamage;
-    } else if (Q_UNLIKELY(m_type == Type::Renderer)) {
-        auto *rnd = static_cast<RendererNode *>(this);
-        if (rnd->m_damageFunc) {
+    if (Q_UNLIKELY(m_type == Type::Custom)) {
+        auto *cn = static_cast<CustomNode *>(this);
+        if (cn->m_damageProcessor) {
             RenderContext ctx;
             ctx.viewport = nullptr;
             ctx.overallDamage = acc;
             ctx.worldTransform = m_worldTransform;
-            ctx.renderMatrix = m_worldTransform;
-            ctx.boundingRect = rnd->boundingRect();
+            ctx.boundingRect = cn->boundingRect();
             ctx.worldBounds = m_worldBounds;
             ctx.outputBounds = m_worldBounds;
-            ctx.node = rnd;
-
-            const QRegion customDamage = rnd->m_damageFunc(ctx);
-            m_inducedDamage = customDamage;
-            acc += customDamage;
+            m_inducedDamage = cn->m_damageProcessor(cn, acc, ctx);
+            acc += m_inducedDamage;
         }
     }
+
     acc += m_ownDamage;
 
     for (Node *child = m_firstChild; child; child = child->m_next)
-        child->collectBackdrop(acc);
+        child->collectWorldDamage(acc);
 }
 
 void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                           QRegion &screen, const QTransform &worldToOutput,
-                          const QRect &outputRect, const Viewport *viewport,
-                          const std::function<NodeViewportData *(Node *)> &dataFactory)
+                          const QRect &outputRect)
 {
     if (Q_UNLIKELY(!m_visible)) {
-        if (hasContent()) {
-            NodeViewportData *view = dataFactory(this);
-            view->viewport = viewport;
-            view->culled = true;
-            view->fullyOccluded = false;
-            view->occludedRegion = {};
-            view->visibleDamage = {};
-        }
         return;
     }
 
@@ -453,7 +326,7 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
 
     for (Node *child = m_lastChild; child; child = child->m_prev) {
         child->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                              worldToOutput, outputRect, viewport, dataFactory);
+                              worldToOutput, outputRect);
     }
 
     const bool usableTransform = Q_LIKELY(worldToOutput.isAffine() && worldToOutput.isInvertible());
@@ -493,44 +366,6 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     // culled/fullyOccluded/occludedRegion for the view. Uses QRect when the
     // front-opaque AABB doesn't intersect (avoids QRegion heap ops).
     if (Q_LIKELY(!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty())) {
-        QRect boundsRect;
-        if (usableTransform)
-            boundsRect = mapOuter(worldToOutput, QRectF(m_worldBounds));
-        else if (!outputRect.isEmpty())
-            boundsRect = outputRect;
-        else
-            boundsRect = mapOuter(worldToOutput, QRectF(m_worldBounds));
-        if (!outputRect.isEmpty())
-            boundsRect &= outputRect;
-
-        NodeViewportData *view = dataFactory(this);
-        view->viewport = viewport;
-        view->outputBounds = boundsRect;
-        view->visibleDamage = {};
-            if (Q_UNLIKELY(boundsRect.isEmpty())) {
-            view->culled = true;
-            view->fullyOccluded = false;
-            view->occludedRegion = {};
-            } else if (Q_UNLIKELY(!frontOpaque.isEmpty())) {
-            // Check full occlusion with QRect API — avoids QRegion subtraction.
-            if (frontOpaque.contains(boundsRect)) {
-                view->fullyOccluded = true;
-                view->culled = true;
-                view->occludedRegion = QRegion(boundsRect);
-            } else {
-                view->fullyOccluded = false;
-                view->culled = false;
-                const QRect frontAABB = frontOpaque.boundingRect();
-                if (frontAABB.intersects(boundsRect))
-                    view->occludedRegion = frontOpaque & boundsRect;
-                else
-                    view->occludedRegion = {};
-            }
-        } else {
-            view->culled = false;
-            view->fullyOccluded = false;
-            view->occludedRegion = {};
-        }
         return;
     }
 
@@ -553,15 +388,35 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
             opaque &= outputRect;
     }
 
+    // Custom/Backdrop opaque: processor-driven, no type dispatch
+    if (Q_UNLIKELY(m_type == Type::Custom)) {
+        auto *cn = static_cast<CustomNode *>(this);
+        if (cn->m_opaqueProcessor) {
+            QRegion leaked;
+            if (!remaining.isEmpty() && !m_worldBounds.isEmpty()) {
+                QRegion boundsForLeak;
+                if (usableTransform)
+                    boundsForLeak = QRegion(mapOuter(worldToOutput, QRectF(m_worldBounds)));
+                else if (!outputRect.isEmpty())
+                    boundsForLeak = QRegion(outputRect);
+                else
+                    boundsForLeak = QRegion(mapOuter(worldToOutput, QRectF(m_worldBounds)));
+                if (!outputRect.isEmpty())
+                    boundsForLeak &= outputRect;
+                leaked = remaining & boundsForLeak;
+            }
+            QRegion newFrontOpaque = cn->m_opaqueProcessor(cn, frontOpaque, leaked, m_worldTransform, m_worldBounds);
+            QRegion removed = frontOpaque - newFrontOpaque;
+            if (!removed.isEmpty()) {
+                frontOpaque = newFrontOpaque;
+                exposed += removed;
+            }
+        }
+    }
+
     QRegion visibleLocalDamage;
     QRegion nonOccludedBounds;
-    NodeViewportData *view = dataFactory(this);
-    view->viewport = viewport;
-    view->outputBounds = boundsReg.boundingRect();
     if (Q_LIKELY(frontOpaque.isEmpty())) {
-        view->occludedRegion = {};
-        view->fullyOccluded = false;
-        view->culled = boundsReg.isEmpty();
         nonOccludedBounds = boundsReg;
         visibleLocalDamage = localDamage;
     } else {
@@ -569,32 +424,12 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         const QRect nodeAABB = boundsReg.boundingRect();
 
         if (Q_LIKELY(!frontAABB.intersects(nodeAABB))) {
-            view->occludedRegion = {};
-            view->fullyOccluded = false;
-            view->culled = boundsReg.isEmpty();
             nonOccludedBounds = boundsReg;
             visibleLocalDamage = localDamage;
         } else {
-            view->occludedRegion = boundsReg & frontOpaque;
             nonOccludedBounds = boundsReg - frontOpaque;
-            view->fullyOccluded = !boundsReg.isEmpty() && nonOccludedBounds.isEmpty();
-            view->culled = boundsReg.isEmpty() || view->fullyOccluded;
             visibleLocalDamage = localDamage.isEmpty() ? QRegion() : (localDamage - frontOpaque);
         }
-    }
-
-    if (Q_LIKELY(exposed.isEmpty())) {
-        if (!visibleLocalDamage.isEmpty())
-            view->visibleDamage = visibleLocalDamage & boundsReg;
-        else
-            view->visibleDamage = {};
-    } else {
-        if (!nonOccludedBounds.isEmpty())
-            view->visibleDamage = exposed & nonOccludedBounds;
-        else
-            view->visibleDamage = {};
-        if (!visibleLocalDamage.isEmpty())
-            view->visibleDamage += visibleLocalDamage & boundsReg;
     }
 
     if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
@@ -618,223 +453,6 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
     } else {
         if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
             exposed += visibleLocalDamage;
-    }
-}
-
-void Node::applyOcclusionMulti(ViewportOcclusionState *states, int count,
-                                const QRegion &worldDamage,
-                                const std::function<NodeViewportData *(Node *, Viewport *)> &dataFactory)
-{
-    if (!m_visible) {
-        if (hasContent()) {
-            for (int i = 0; i < count; ++i) {
-                auto &vps = states[i];
-                NodeViewportData *view = dataFactory(this, vps.viewport);
-                view->viewport = vps.viewport;
-                view->culled = true;
-                view->fullyOccluded = false;
-                view->occludedRegion = {};
-                view->visibleDamage = {};
-            }
-        }
-        return;
-    }
-
-    // Subtree AABB culling per viewport: skip off-screen subtrees for that viewport only.
-    // The child recursion still happens once — each viewport's remaining/visible state
-    // is preserved because applyOcclusion for that viewport was skipped.
-    for (int i = 0; i < count; ++i) {
-        auto &vps = states[i];
-        const auto &vp = *vps.viewport;
-        if (!vp.outputRect.isEmpty() && !m_subtreeAABB.isEmpty()) {
-            const QRect outputSubtreeAABB = mapOuter(vp.worldToOutput, QRectF(m_subtreeAABB));
-            if (!outputSubtreeAABB.intersects(vp.outputRect)) {
-                // Mark all content nodes in this subtree as culled for this viewport
-                if (hasContent()) {
-                    NodeViewportData *view = dataFactory(this, vps.viewport);
-                    view->viewport = vps.viewport;
-                    view->culled = true;
-                    view->fullyOccluded = false;
-                    view->occludedRegion = {};
-                    view->visibleDamage = {};
-                }
-                vps.skipped = true;
-            }
-        }
-    }
-
-    // Recurse children ONCE (not per viewport)
-    for (Node *child = m_lastChild; child; child = child->m_prev) {
-        // Save/restore per-viewport state so each child sees the parent's accumulated frontOpaque
-        child->applyOcclusionMulti(states, count, worldDamage, dataFactory);
-    }
-
-    // Per-viewport occlusion math for THIS node
-    const bool hasDamage = !m_ownDamage.isEmpty() || !m_inducedDamage.isEmpty();
-    QRegion worldLocalDamage;
-    if (hasDamage) {
-        if (m_inducedDamage.isEmpty())
-            worldLocalDamage = m_ownDamage;
-        else if (m_ownDamage.isEmpty())
-            worldLocalDamage = m_inducedDamage;
-        else
-            worldLocalDamage = m_ownDamage + m_inducedDamage;
-    }
-
-    for (int i = 0; i < count; ++i) {
-        auto &vps = states[i];
-        if (vps.skipped) {
-            vps.skipped = false;
-            continue;
-        }
-        const auto &vp = *vps.viewport;
-
-        const bool usableTransform = vp.worldToOutput.isAffine() && vp.worldToOutput.isInvertible();
-
-        QRegion localDamage;
-        if (hasDamage) {
-            if (usableTransform) {
-                localDamage = mapRegionOuter(vp.worldToOutput, worldLocalDamage);
-            } else if (!vp.outputRect.isEmpty()) {
-                localDamage = QRegion(vp.outputRect);
-            } else {
-                localDamage = mapRegionOuter(vp.worldToOutput, worldLocalDamage);
-            }
-            if (!vp.outputRect.isEmpty())
-                localDamage &= vp.outputRect;
-        }
-
-        if (!hasContent()) {
-            if (!localDamage.isEmpty())
-                vps.screen += localDamage;
-            continue;
-        }
-
-        // Fast path: damage-free, non-opaque, non-exposed
-        if (!hasDamage && m_worldOpaque.isEmpty() && vps.exposed.isEmpty()) {
-            QRect boundsRect;
-            if (usableTransform)
-                boundsRect = mapOuter(vp.worldToOutput, QRectF(m_worldBounds));
-            else if (!vp.outputRect.isEmpty())
-                boundsRect = vp.outputRect;
-            else
-                boundsRect = mapOuter(vp.worldToOutput, QRectF(m_worldBounds));
-            if (!vp.outputRect.isEmpty())
-                boundsRect &= vp.outputRect;
-
-            NodeViewportData *view = dataFactory(this, vps.viewport);
-            view->viewport = vps.viewport;
-            view->outputBounds = boundsRect;
-            view->visibleDamage = {};
-            if (boundsRect.isEmpty()) {
-                view->culled = true;
-                view->fullyOccluded = false;
-                view->occludedRegion = {};
-            } else if (!vps.frontOpaque.isEmpty()) {
-                if (vps.frontOpaque.contains(boundsRect)) {
-                    view->fullyOccluded = true;
-                    view->culled = true;
-                    view->occludedRegion = QRegion(boundsRect);
-                } else {
-                    view->fullyOccluded = false;
-                    view->culled = false;
-                    const QRect frontAABB = vps.frontOpaque.boundingRect();
-                    if (frontAABB.intersects(boundsRect))
-                        view->occludedRegion = vps.frontOpaque & boundsRect;
-                    else
-                        view->occludedRegion = {};
-                }
-            } else {
-                view->culled = false;
-                view->fullyOccluded = false;
-                view->occludedRegion = {};
-            }
-            continue;
-        }
-
-        QRegion boundsReg;
-        if (usableTransform)
-            boundsReg = QRegion(mapOuter(vp.worldToOutput, QRectF(m_worldBounds)));
-        else if (!vp.outputRect.isEmpty())
-            boundsReg = QRegion(vp.outputRect);
-        else
-            boundsReg = QRegion(mapOuter(vp.worldToOutput, QRectF(m_worldBounds)));
-        if (!vp.outputRect.isEmpty())
-            boundsReg &= vp.outputRect;
-
-        QRegion opaque;
-        if (!m_worldOpaque.isEmpty()) {
-            if (usableTransform)
-                opaque = mapRegionInner(vp.worldToOutput, m_worldOpaque);
-            if (!vp.outputRect.isEmpty())
-                opaque &= vp.outputRect;
-        }
-
-        QRegion visibleLocalDamage;
-        QRegion nonOccludedBounds;
-        NodeViewportData *view = dataFactory(this, vps.viewport);
-        view->viewport = vps.viewport;
-        view->outputBounds = boundsReg.boundingRect();
-        if (vps.frontOpaque.isEmpty()) {
-            view->occludedRegion = {};
-            view->fullyOccluded = false;
-            view->culled = boundsReg.isEmpty();
-            nonOccludedBounds = boundsReg;
-            visibleLocalDamage = localDamage;
-        } else {
-            const QRect frontAABB = vps.frontOpaque.boundingRect();
-            const QRect nodeAABB = boundsReg.boundingRect();
-
-            if (!frontAABB.intersects(nodeAABB)) {
-                view->occludedRegion = {};
-                view->fullyOccluded = false;
-                view->culled = boundsReg.isEmpty();
-                nonOccludedBounds = boundsReg;
-                visibleLocalDamage = localDamage;
-            } else {
-                view->occludedRegion = boundsReg & vps.frontOpaque;
-                nonOccludedBounds = boundsReg - vps.frontOpaque;
-                view->fullyOccluded = !boundsReg.isEmpty() && nonOccludedBounds.isEmpty();
-                view->culled = boundsReg.isEmpty() || view->fullyOccluded;
-                visibleLocalDamage = localDamage.isEmpty() ? QRegion() : (localDamage - vps.frontOpaque);
-            }
-        }
-
-        if (vps.exposed.isEmpty()) {
-            if (!visibleLocalDamage.isEmpty())
-                view->visibleDamage = visibleLocalDamage & boundsReg;
-            else
-                view->visibleDamage = {};
-        } else {
-            if (!nonOccludedBounds.isEmpty())
-                view->visibleDamage = vps.exposed & nonOccludedBounds;
-            else
-                view->visibleDamage = {};
-            if (!visibleLocalDamage.isEmpty())
-                view->visibleDamage += visibleLocalDamage & boundsReg;
-        }
-
-        if (!visibleLocalDamage.isEmpty())
-            vps.screen += visibleLocalDamage;
-
-        if (!opaque.isEmpty()) {
-            if (!vps.remaining.isEmpty())
-                vps.remaining -= opaque;
-            if (!vps.exposed.isEmpty())
-                vps.exposed -= opaque;
-            if (!visibleLocalDamage.isEmpty()) {
-                const QRect opaqueAABB = opaque.boundingRect();
-                const QRect damageAABB = visibleLocalDamage.boundingRect();
-                if (opaqueAABB.intersects(damageAABB))
-                    vps.exposed += visibleLocalDamage - opaque;
-                else
-                    vps.exposed += visibleLocalDamage;
-            }
-            vps.frontOpaque += opaque;
-        } else {
-            if (!visibleLocalDamage.isEmpty())
-                vps.exposed += visibleLocalDamage;
-        }
     }
 }
 
@@ -878,10 +496,6 @@ void Node::dumpTreeRecursive(QString &out, int depth) const
     }
     if (!m_visible)
         out += QStringLiteral(" hidden");
-    if (m_fullyOccluded && hasContent())
-        out += QStringLiteral(" occluded");
-    else if (m_culled && hasContent())
-        out += QStringLiteral(" culled");
     out += QLatin1Char('\n');
     for (Node *child = m_firstChild; child; child = child->m_next)
         child->dumpTreeRecursive(out, depth + 1);
@@ -997,12 +611,69 @@ void GeometryNode::markContentDirty(const QRect &localRect)
     markContentDirty(QRegion(localRect));
 }
 
-BackdropNode::BackdropNode()
-    : GeometryNode(Type::Backdrop)
+CustomNode::CustomNode()
+    : GeometryNode(Type::Custom)
 {
 }
 
-void BackdropNode::setBackdropExpansion(const QMargins &margins)
+CustomNode::CustomNode(Type type)
+    : GeometryNode(type)
+{
+}
+
+void CustomNode::setOpaqueProcessor(OpaqueProcessor func)
+{
+    m_opaqueProcessor = std::move(func);
+    markDirty(DirtyOpaque);
+}
+
+void CustomNode::setDamageProcessor(DamageProcessor func)
+{
+    m_damageProcessor = std::move(func);
+    markDirty(DirtyContent);
+}
+
+BackdropNode::BackdropNode()
+    : CustomNode()
+{
+    setDamageProcessor(&BackdropNode::defaultDamageProcessor);
+    setOpaqueProcessor(&BackdropNode::defaultOpaqueProcessor);
+}
+
+QRegion BackdropNode::defaultDamageProcessor(const CustomNode *node,
+                                              const QRegion &collectedDamage,
+                                              const RenderContext &ctx)
+{
+    const auto *bg = static_cast<const BackdropNode *>(node);
+    const QRect sample = ctx.worldBounds.marginsAdded(bg->m_expansion);
+    QRegion relevant = collectedDamage;
+    relevant &= sample;
+    QRegion induced = dilateRegion(relevant, bg->m_expansion);
+    if (bg->m_clipExpansion)
+        induced &= ctx.worldBounds;
+    else
+        induced &= ctx.worldBounds.marginsAdded(bg->m_expansion);
+    return induced;
+}
+
+QRegion BackdropNode::defaultOpaqueProcessor(const CustomNode *node,
+                                               const QRegion &frontOpaque,
+                                               const QRegion &leaked,
+                                               const QTransform &,
+                                               const QRect &worldBounds)
+{
+    if (leaked.isEmpty())
+        return frontOpaque;
+    const auto *bg = static_cast<const BackdropNode *>(node);
+    QRegion expanded = dilateRegion(leaked, bg->m_expansion);
+    if (bg->m_clipExpansion)
+        expanded &= QRegion(worldBounds);
+    else
+        expanded &= QRegion(worldBounds.marginsAdded(bg->m_expansion));
+    return frontOpaque - (expanded & frontOpaque);
+}
+
+void BackdropNode::setExpansion(const QMargins &margins)
 {
     if (m_expansion == margins)
         return;
@@ -1010,28 +681,17 @@ void BackdropNode::setBackdropExpansion(const QMargins &margins)
     markDirty(DirtyGeometry);
 }
 
-void BackdropNode::setBackdropExpansion(int px)
+void BackdropNode::setExpansion(int px)
 {
-    setBackdropExpansion(QMargins(px, px, px, px));
+    setExpansion(QMargins(px, px, px, px));
 }
 
-void BackdropNode::setClipExpansion(bool clip)
+void BackdropNode::setClip(bool clip)
 {
     if (m_clipExpansion == clip)
         return;
     m_clipExpansion = clip;
     markDirty(DirtyGeometry);
-}
-
-RendererNode::RendererNode()
-    : GeometryNode(Type::Renderer)
-{
-}
-
-void RendererNode::setDamageFunction(DamageFunction func)
-{
-    m_damageFunc = std::move(func);
-    markDirty(DirtyContent);
 }
 
 } // namespace Gdt
