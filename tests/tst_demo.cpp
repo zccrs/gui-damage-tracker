@@ -20,6 +20,8 @@ private slots:
     void rotationAndScaleScenesAnimate();
     void builtInScenesAnimateAndAllowEditing();
     void selectingTreeNodeDoesNotRaiseIt();
+    void activateNodeDoesNotSelect();
+    void moveNodeByDoesNotSelect();
     void opacityChangesFixedName();
     void dragUpdatesCoordinatesInRealTime();
     void refreshRateThrottlesDragFrames();
@@ -171,6 +173,31 @@ void tst_Demo::selectingTreeNodeDoesNotRaiseIt()
     QCOMPARE(scene.treeNodes().at(1).toMap()
                  .value(QStringLiteral("id")).toULongLong(), lowerNode);
 }
+
+void tst_Demo::activateNodeDoesNotSelect()
+{
+    DemoScene scene;
+    const quint64 back = scene.treeNodes().at(1).toMap()
+                             .value(QStringLiteral("id")).toULongLong();
+    const quint64 front = scene.treeNodes().at(2).toMap()
+                              .value(QStringLiteral("id")).toULongLong();
+    scene.setSelectedId(front);
+    scene.activateNode(back);
+    QCOMPARE(scene.selectedId(), front);
+    QCOMPARE(scene.treeNodes().at(2).toMap().value(QStringLiteral("id")).toULongLong(), back);
+}
+
+void tst_Demo::moveNodeByDoesNotSelect()
+{
+    DemoScene scene;
+    const quint64 selected = scene.selectedId();
+    const quint64 other = scene.treeNodes().at(2).toMap()
+                              .value(QStringLiteral("id")).toULongLong();
+    QVERIFY(other != selected);
+    scene.moveNodeBy(other, 5, 7);
+    QCOMPARE(scene.selectedId(), selected);
+}
+
 
 void tst_Demo::opacityChangesFixedName()
 {

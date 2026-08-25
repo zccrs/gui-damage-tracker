@@ -882,18 +882,14 @@ ApplicationWindow {
                                         property bool interactionStarted: false
 
                                         anchors.fill: parent
-                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        acceptedButtons: Qt.LeftButton
                                         onPressed: function(mouse) {
                                             if (mouse.button === Qt.LeftButton) {
-                                                scene.selectedId = model.id
                                                 isDragging = true
                                                 interactionStarted = false
                                                 var p = mapToItem(canvas, mouse.x, mouse.y)
                                                 lastCanvasX = p.x
                                                 lastCanvasY = p.y
-                                            } else {
-                                                scene.selectedId = model.id
-                                                nodeMenu.popup(nodeRect, mouse.x, mouse.y)
                                             }
                                         }
                                         onPositionChanged: function(mouse) {
@@ -910,7 +906,7 @@ ApplicationWindow {
                                             }
                                             lastCanvasX = p.x
                                             lastCanvasY = p.y
-                                            scene.moveSelectedBy(dx, dy)
+                                            scene.moveNodeBy(model.id, dx, dy)
                                         }
                                         onReleased: function(mouse) {
                                             if (mouse.button === Qt.LeftButton) {

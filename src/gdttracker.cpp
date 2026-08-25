@@ -48,13 +48,12 @@ void Tracker::computeViewport(Viewport &vp, const QRegion &worldDamage)
         remaining &= outRect;
 
     QRegion frontOpaque;
-    QRegion worldFrontOpaque;
     QRegion exposed;
     QRegion screen;
 
     if (m_root) {
         m_root->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                               w2o, outRect, worldFrontOpaque);
+                               w2o, outRect);
     }
 
     if (!outRect.isEmpty())
@@ -77,6 +76,8 @@ void Tracker::prepareFrame()
     if (Q_LIKELY(!treeDirty))
         return;
     m_root->updateWorld(QTransform(), false);
+    QRegion worldFrontOpaque;
+    m_root->computeWorldVisibility(worldFrontOpaque);
     m_root->collectWorldDamage(m_worldDamage);
 }
 

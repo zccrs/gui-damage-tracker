@@ -86,6 +86,7 @@ public:
     Q_INVOKABLE void moveNode(quint64 nodeId, quint64 newParentId,
                               quint64 beforeSiblingId = 0);
     Q_INVOKABLE void activateNode(quint64 id);
+    Q_INVOKABLE void moveNodeBy(quint64 id, qreal dx, qreal dy);
 
     Q_INVOKABLE void addBasic();
     Q_INVOKABLE void addTransform();

@@ -88,9 +88,7 @@ public:
     void removeAllChildren(); // does not delete
     Node *takeChild(Node *child); // alias of removeChild, returns child
 
-    // After Tracker::commit(). World fields are viewport-independent.
-    // Per-viewport regions use output coordinates. The unqualified viewport
-    // accessors mirror id 0 when present, otherwise the first viewport.
+    // After Tracker::prepareFrame(). World fields are viewport-independent.
     QTransform worldTransform() const { return m_worldTransform; }
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
@@ -113,9 +111,11 @@ private:
     void clearFrameDamageRecursive();
     void updateWorld(const QTransform &parentWorld, bool parentWorldChanged);
     void collectWorldDamage(QRegion &acc);
+    void computeWorldVisibility(QRegion &worldFrontOpaque);
+    void resetWorldVisibleRecursive();
     void applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
                         QRegion &screen, const QTransform &worldToOutput,
-                        const QRect &outputRect, QRegion &worldFrontOpaque);
+                        const QRect &outputRect);
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
     Type m_type;
@@ -176,15 +176,17 @@ public:
     void setBoundingRect(const QRectF &rect);
     QRectF boundingRect() const { return m_boundingRect; }
 
+    // Content-local opaque pixels. Origin is boundingRect top-left.
     void setOpaqueRegion(const QRegion &localOpaque);
     QRegion opaqueRegion() const { return m_opaqueRegion; }
 
-    // Marks every pixel inside the (inner-aligned) bounding rect as opaque.
+    // Marks every pixel inside the (inner-aligned) content box as opaque.
     // Recomputed when the bounding rect changes.
     void setFullyOpaque(bool fullyOpaque);
     bool isFullyOpaque() const { return m_fullyOpaque; }
 
-    // Local-space dirty pixels of this node's content. Clipped to bounding rect.
+    // Content-local dirty pixels. Origin is boundingRect top-left.
+    // Clipped to the content box on commit.
     void markContentDirty(const QRegion &localRegion);
     void markContentDirty(const QRect &localRect);
 

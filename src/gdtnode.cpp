@@ -22,6 +22,13 @@ static QString typeName(Node::Type t)
     }
     return QStringLiteral("?");
 }
+static QTransform contentToWorld(const QTransform &world, const QRectF &bounds)
+{
+    if (Q_LIKELY(qFuzzyIsNull(bounds.x()) && qFuzzyIsNull(bounds.y())))
+        return world;
+    return world * QTransform::fromTranslate(bounds.x(), bounds.y());
+}
+
 
 Node::Node(Type type)
     : m_type(type)
@@ -253,7 +260,8 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
             geo->syncFullyOpaqueRegion();
 
         m_worldBounds = mapOuter(m_worldTransform, geo->m_boundingRect);
-        m_worldOpaque = mapRegionInner(m_worldTransform, geo->m_opaqueRegion);
+        const QTransform c2w = contentToWorld(m_worldTransform, geo->m_boundingRect);
+        m_worldOpaque = mapRegionInner(c2w, geo->m_opaqueRegion);
 
         if (appearing) {
             m_ownDamage += m_worldBounds;
@@ -263,7 +271,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged)
                 m_ownDamage += m_worldBounds;
             }
             if (m_dirty & DirtyContent) {
-                QRegion mapped = mapRegionOuter(m_worldTransform, geo->m_pendingContentDamage);
+                QRegion mapped = mapRegionOuter(c2w, geo->m_pendingContentDamage);
                 mapped &= m_worldBounds;
                 m_ownDamage += mapped;
             }
@@ -309,28 +317,59 @@ void Node::collectWorldDamage(QRegion &acc)
         child->collectWorldDamage(acc);
 }
 
-void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
-                          QRegion &screen, const QTransform &worldToOutput,
-                          const QRect &outputRect,
-                          QRegion &worldFrontOpaque)
+void Node::resetWorldVisibleRecursive()
+{
+    m_worldVisibleRegion = {};
+    for (Node *child = m_firstChild; child; child = child->m_next)
+        child->resetWorldVisibleRecursive();
+}
+
+void Node::computeWorldVisibility(QRegion &worldFrontOpaque)
 {
     if (Q_UNLIKELY(!m_visible)) {
+        resetWorldVisibleRecursive();
+        return;
+    }
+
+    for (Node *child = m_lastChild; child; child = child->m_prev)
+        child->computeWorldVisibility(worldFrontOpaque);
+
+    if (Q_UNLIKELY(!hasContent())) {
         m_worldVisibleRegion = {};
         return;
     }
 
+    if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
+        m_worldVisibleRegion = QRegion(m_worldBounds);
+    } else {
+        const QRect frontAABB = worldFrontOpaque.boundingRect();
+        if (Q_LIKELY(!frontAABB.intersects(m_worldBounds)))
+            m_worldVisibleRegion = QRegion(m_worldBounds);
+        else
+            m_worldVisibleRegion = QRegion(m_worldBounds) - worldFrontOpaque;
+    }
+
+    if (Q_UNLIKELY(!m_worldOpaque.isEmpty()))
+        worldFrontOpaque += m_worldOpaque;
+}
+
+void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exposed,
+                          QRegion &screen, const QTransform &worldToOutput,
+                          const QRect &outputRect)
+{
+    if (Q_UNLIKELY(!m_visible))
+        return;
+
     // Subtree AABB culling: skip entire off-screen subtrees.
     if (Q_LIKELY(!outputRect.isEmpty()) && Q_LIKELY(!m_subtreeAABB.isEmpty())) {
         const QRect outputSubtreeAABB = mapOuter(worldToOutput, QRectF(m_subtreeAABB));
-        if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect))) {
-            m_worldVisibleRegion = {};
+        if (Q_UNLIKELY(!outputSubtreeAABB.intersects(outputRect)))
             return;
-        }
     }
 
     for (Node *child = m_lastChild; child; child = child->m_prev) {
         child->applyOcclusion(frontOpaque, remaining, exposed, screen,
-                              worldToOutput, outputRect, worldFrontOpaque);
+                              worldToOutput, outputRect);
     }
 
     const bool usableTransform = Q_LIKELY(worldToOutput.isAffine() && worldToOutput.isInvertible());
@@ -365,23 +404,9 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
         return;
     }
 
-    if (Q_LIKELY(worldFrontOpaque.isEmpty())) {
-        m_worldVisibleRegion = QRegion(m_worldBounds);
-    } else {
-        const QRect frontAABB = worldFrontOpaque.boundingRect();
-        if (Q_LIKELY(!frontAABB.intersects(m_worldBounds))) {
-            m_worldVisibleRegion = QRegion(m_worldBounds);
-        } else {
-            m_worldVisibleRegion = QRegion(m_worldBounds) - worldFrontOpaque;
-        }
-    }
-
     // Fast path: damage-free, non-opaque, non-exposed displayable node.
-    if (Q_LIKELY(!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty())) {
-        // Still need to accumulate world opaque for culling siblings behind
-        worldFrontOpaque += m_worldOpaque;
+    if (Q_LIKELY(!hasDamage && m_worldOpaque.isEmpty() && exposed.isEmpty()))
         return;
-    }
 
     QRegion boundsReg;
     if (usableTransform) {
@@ -464,7 +489,6 @@ void Node::applyOcclusion(QRegion &frontOpaque, QRegion &remaining, QRegion &exp
                 exposed += visibleLocalDamage;
         }
         frontOpaque += opaque;
-        worldFrontOpaque += m_worldOpaque;
     } else {
         if (Q_UNLIKELY(!visibleLocalDamage.isEmpty()))
             exposed += visibleLocalDamage;
@@ -575,7 +599,8 @@ GeometryNode::GeometryNode(Type type)
 }
 void GeometryNode::syncFullyOpaqueRegion()
 {
-    m_opaqueRegion = QRegion(innerAligned(m_boundingRect));
+    m_opaqueRegion = QRegion(innerAligned(QRectF(0, 0, m_boundingRect.width(),
+                                                 m_boundingRect.height())));
 }
 
 void GeometryNode::setBoundingRect(const QRectF &rect)

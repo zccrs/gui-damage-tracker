@@ -358,7 +358,6 @@ void DemoScene::activateNode(quint64 id)
     Node *node = findNode(id);
     if (!node)
         return;
-    setSelectedId(id);
     if (!node->parent() || !node->nextSibling())
         return;
     node->parent()->appendChild(node);
@@ -617,8 +616,8 @@ void DemoScene::markSelectedContentDirty()
     if (!n || !n->toGeometry())
         return;
     const QRectF br = n->toGeometry()->boundingRect();
-    n->toGeometry()->markContentDirty(QRect(int(br.x()), int(br.y()),
-                                            int(br.width()), int(br.height())));
+    n->toGeometry()->markContentDirty(QRect(0, 0, int(std::ceil(br.width())),
+                                            int(std::ceil(br.height()))));
     maybeCommit();
 }
 
@@ -632,9 +631,9 @@ void DemoScene::markSelectedContentDirtyAt(qreal x, qreal y, qreal w, qreal h)
     maybeCommit();
 }
 
-void DemoScene::moveSelectedBy(qreal dx, qreal dy)
+void DemoScene::moveNodeBy(quint64 id, qreal dx, qreal dy)
 {
-    Node *n = findNode(m_selectedId);
+    Node *n = findNode(id);
     if (!n)
         return;
     if (auto *tr = n->toTransform()) {
@@ -655,6 +654,12 @@ void DemoScene::moveSelectedBy(qreal dx, qreal dy)
         m_dragFrameTimer.start();
     }
 }
+
+void DemoScene::moveSelectedBy(qreal dx, qreal dy)
+{
+    moveNodeBy(m_selectedId, dx, dy);
+}
+
 
 void DemoScene::finishSelectedMove()
 {
@@ -901,8 +906,9 @@ void DemoScene::advanceDemoFrame()
     const int triangle = phase < 60 ? phase : 120 - phase;
     if (m_demoSceneName == QLatin1String("content")) {
         if (auto *node = findNode(m_demoNodeA)) {
-            if (auto *geometry = node->toGeometry())
-                geometry->markContentDirty(QRect(112 + triangle * 2, 134, 26, 20));
+            if (auto *geometry = node->toGeometry()) {
+                geometry->markContentDirty(QRect(12 + triangle * 2, 24, 26, 20));
+            }
         }
     } else if (m_demoSceneName == QLatin1String("backdrop")) {
         if (auto *node = findNode(m_demoNodeA)) {
