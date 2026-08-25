@@ -96,8 +96,6 @@ public:
     QRect subtreeBounds() const { return m_subtreeAABB; }
     QRegion worldOpaqueRegion() const { return m_worldOpaque; }
     QRegion visibleRegion() const { return m_visibleRegion; }
-    QRegion ownDamage() const { return m_ownDamage; }
-    QRegion inducedDamage() const { return m_inducedDamage; }
     DirtyBits dirty() const { return m_dirty; }
     bool isDirty() const { return m_dirty != 0; }
 
@@ -108,7 +106,7 @@ protected:
     bool m_hasContent = false;
 private:
     friend class Tracker;
-
+    friend class NodeTestAccess;
     void attach(Node *child, Node *prev, Node *next);
     void unlink(Node *child);
     void adopt(Node *child);

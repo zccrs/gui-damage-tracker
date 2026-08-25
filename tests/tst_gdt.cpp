@@ -521,7 +521,7 @@ void tst_Gdt::backdropNoExpansion()
 
     behind->markContentDirty(QRect(25, 25, 2, 2));
     tracker.commit();
-    CONTAINS_REGION(bg->inducedDamage(), QRegion(25, 25, 2, 2));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(bg), QRegion(25, 25, 2, 2));
 }
 
 void tst_Gdt::expansion()
@@ -540,7 +540,7 @@ void tst_Gdt::expansion()
 
     behind->markContentDirty(QRect(50, 50, 1, 1));
     tracker.commit();
-    CONTAINS_REGION(bg->inducedDamage(), QRegion(45, 45, 11, 11));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(bg), QRegion(45, 45, 11, 11));
 }
 
 void tst_Gdt::backdropOwnDamageDoesNotInduce()
@@ -556,7 +556,7 @@ void tst_Gdt::backdropOwnDamageDoesNotInduce()
 
     bg->markContentDirty(QRect(50, 50, 1, 1));
     COMPARE_REGION(tracker.commit(), QRegion(50, 50, 1, 1));
-    COMPARE_REGION(bg->inducedDamage(), QRegion());
+    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion());
 }
 
 void tst_Gdt::backdropSamplesOutsideBounds()
@@ -577,9 +577,9 @@ void tst_Gdt::backdropSamplesOutsideBounds()
     // 3px left of the backdrop node, inside the 5px sample margin.
     behind->markContentDirty(QRect(47, 55, 1, 1));
     tracker.commit();
-    QVERIFY(!bg->inducedDamage().isEmpty());
-    QVERIFY((bg->inducedDamage() - QRegion(50, 50, 20, 20)).isEmpty());
-    QVERIFY(bg->inducedDamage().intersects(QRect(50, 50, 5, 20)));
+    QVERIFY(!NodeTestAccess::inducedDamage(bg).isEmpty());
+    QVERIFY((NodeTestAccess::inducedDamage(bg) - QRegion(50, 50, 20, 20)).isEmpty());
+    QVERIFY(NodeTestAccess::inducedDamage(bg).intersects(QRect(50, 50, 5, 20)));
 }
 
 void tst_Gdt::backdropClipBleed()
@@ -599,7 +599,7 @@ void tst_Gdt::backdropClipBleed()
 
     behind->markContentDirty(QRect(50, 50, 2, 2));
     tracker.commit();
-    QVERIFY(bg->inducedDamage().intersects(QRect(46, 46, 4, 4)));
+    QVERIFY(NodeTestAccess::inducedDamage(bg).intersects(QRect(46, 46, 4, 4)));
 }
 
 void tst_Gdt::nestedBackdrop()
@@ -622,9 +622,9 @@ void tst_Gdt::nestedBackdrop()
 
     behind->markContentDirty(QRect(100, 100, 1, 1));
     tracker.commit();
-    CONTAINS_REGION(inner->inducedDamage(), QRegion(98, 98, 5, 5));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(inner), QRegion(98, 98, 5, 5));
     // Outer sees the already-expanded inner damage and expands again.
-    CONTAINS_REGION(outer->inducedDamage(), QRegion(95, 95, 11, 11));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(outer), QRegion(95, 95, 11, 11));
 }
 
 void tst_Gdt::insertBetweenSiblings()
@@ -923,7 +923,7 @@ void tst_Gdt::backdropWithTransform()
 
     behind->markContentDirty(QRect(10, 10, 1, 1));
     tracker.commit();
-    CONTAINS_REGION(bg->inducedDamage(), QRegion(38, 48, 5, 5));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(bg), QRegion(38, 48, 5, 5));
 }
 
 void tst_Gdt::contentDamageUnderOpaqueSibling()
@@ -1179,7 +1179,7 @@ void tst_Gdt::backdropDoesNotSeeFrontDamageAsRequired()
 
     behind->markContentDirty(QRect(20, 20, 2, 2));
     tracker.commit();
-    CONTAINS_REGION(bg->inducedDamage(), QRegion(14, 14, 14, 14));
+    CONTAINS_REGION(NodeTestAccess::inducedDamage(bg), QRegion(14, 14, 14, 14));
 }
 
 void tst_Gdt::twoViewportsIndependentDamage()
@@ -1324,7 +1324,7 @@ void tst_Gdt::nodeHasContentProperty()
     // First commit: only child generates damage, container has no own damage
     const QRegion damage1 = tracker.commit();
     COMPARE_REGION(damage1, QRegion(50, 50, 100, 100));
-    COMPARE_REGION(container->ownDamage(), QRegion());
+    COMPARE_REGION(NodeTestAccess::ownDamage(container), QRegion());
 
     // Moving container bounds without child modification produces no damage when hasContent is false
     container->setBoundingRect(QRectF(0, 0, 400, 400));
