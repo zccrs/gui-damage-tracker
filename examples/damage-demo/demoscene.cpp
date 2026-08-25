@@ -1160,6 +1160,7 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("id"), n->id());
     p.insert(QStringLiteral("name"), m_displayNames.value(n->id(), n->name()));
     p.insert(QStringLiteral("type"), typeString(n->type()));
+    p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("visibleRegion"), n->visibleRegion().boundingRect());
     p.insert(QStringLiteral("opaqueRegion"), n->worldOpaqueRegion().boundingRect());
