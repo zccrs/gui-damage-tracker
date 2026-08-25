@@ -88,28 +88,7 @@ void Tracker::commit(Viewport &vp)
         return;
 
     const bool treeDirty = m_root->isDirty();
-    const bool vpDirty = vp.isDirty();
-
-    // Viewport geometry/transform changed: full damage (old ∪ new)
-    if (vpDirty) {
-        QRegion full;
-        if (!vp.m_committedOutputRect.isEmpty())
-            full += QRegion(vp.m_committedOutputRect);
-        if (!vp.outputRect().isEmpty())
-            full += QRegion(vp.outputRect());
-        else
-            full = QRegion(QRect(-100000, -100000, 200000, 200000));
-        if (!vp.outputRect().isEmpty())
-            full &= vp.outputRect();
-        vp.m_accumulatedDamage += full;
-        if (!vp.outputRect().isEmpty())
-            vp.m_accumulatedDamage &= vp.outputRect();
-        if (!treeDirty)
-            return;
-    }
-
-    // Nothing changed
-    if (!treeDirty && !vpDirty)
+    if (Q_LIKELY(!treeDirty))
         return;
 
     QRegion worldDamage = m_worldDamage;
