@@ -6,6 +6,7 @@
 #include <QRect>
 #include <QTransform>
 #include <QVector>
+#include <QSet>
 
 namespace Gdt {
 
@@ -27,6 +28,8 @@ public:
     const pixman_region32_t *worldDamageRegion() const { return m_worldDamage.native(); }
     const pixman_region32_t *outputDamageRegion() const { return m_outputDamage.native(); }
     const pixman_region32_t *flushRegion() const { return m_flush.native(); }
+    // True if node's ownDamage maps into this output this frame.
+    bool isNodeDirty(quint64 id) const { return m_dirtyNodes.contains(id); }
 
     void addFlushRegion(const pixman_region32_t *damage);
     void addFlushRegion(const QRect &damage);
@@ -46,6 +49,7 @@ private:
     Region m_worldDamage;
     Region m_outputDamage;
     Region m_flush;
+    QSet<quint64> m_dirtyNodes;
 };
 
 class Tracker
@@ -69,6 +73,7 @@ public:
 
 private:
     void mapViewport(Viewport &viewport);
+    void collectDirtyNodes(Node *node, Viewport &viewport);
 
     Node *m_root = nullptr;
     Region m_damage;

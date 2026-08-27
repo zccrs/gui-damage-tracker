@@ -55,6 +55,7 @@ void Viewport::finishFrame()
     m_worldDamage = {};
     m_outputDamage = {};
     m_flush = {};
+    m_dirtyNodes = {};
 }
 
 Tracker::Tracker(Node *root)
@@ -118,6 +119,26 @@ void Tracker::mapViewport(Viewport &vp)
     }
 }
 
+void Tracker::collectDirtyNodes(Node *node, Viewport &vp)
+{
+    if (!node)
+        return;
+    if (node->hasContent() && !node->m_ownDamage.isEmpty()) {
+        bool dirty = true;
+        if (vp.m_transformFallback) {
+            dirty = !vp.m_outputDamage.isEmpty();
+        } else if (!vp.m_outputRect.isEmpty()) {
+            Region mapped = mapRegionOuter(vp.m_worldToOutput, node->m_ownDamage);
+            mapped &= vp.m_outputRect;
+            dirty = !mapped.isEmpty();
+        }
+        if (dirty)
+            vp.m_dirtyNodes.insert(node->id());
+    }
+    for (Node *child = node->firstChild(); child; child = child->nextSibling())
+        collectDirtyNodes(child, vp);
+}
+
 void Tracker::commit(QVector<Viewport> &viewports)
 {
     Q_ASSERT(m_phase == Phase::Prepared);
@@ -134,16 +155,23 @@ void Tracker::commit(QVector<Viewport> &viewports)
             }
         }
     }
-    if (Q_LIKELY(idle))
+    if (Q_LIKELY(idle)) {
+        for (Viewport &viewport : viewports)
+            viewport.m_dirtyNodes = {};
         return;
+    }
 
     if (m_root->isDirty()) {
         Region worldFrontOpaque;
-        m_root->computeWorldVisibility(worldFrontOpaque);
+        Region worldFrontBackdrop;
+        m_root->computeWorldVisibility(worldFrontOpaque, worldFrontBackdrop);
     }
 
-    for (Viewport &viewport : viewports)
+    for (Viewport &viewport : viewports) {
+        viewport.m_dirtyNodes = {};
         mapViewport(viewport);
+        collectDirtyNodes(m_root, viewport);
+    }
 }
 
 void Tracker::finishFrame()

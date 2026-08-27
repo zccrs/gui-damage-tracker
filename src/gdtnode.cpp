@@ -303,8 +303,10 @@ void Node::clearBehindDamageRecursive()
 
 void Node::resetWorldVisibleRecursive()
 {
-    m_worldVisibleRegion = {};
+    m_worldValidRegion = {};
     m_worldFrontOpaque = {};
+    m_worldVisibleRegion = {};
+    m_worldFrontBackdrop = {};
     for (Node *child = m_firstChild; child; child = child->m_next)
         child->resetWorldVisibleRecursive();
 }
@@ -313,12 +315,12 @@ void Node::collectCommittedVisible(Region &visible) const
 {
     if (!m_committedVisible)
         return;
-    visible += m_committedWorldVisibleRegion;
+    visible += m_committedWorldValidRegion;
     for (const Node *child = m_firstChild; child; child = child->m_next)
         child->collectCommittedVisible(visible);
 }
 
-void Node::computeWorldVisibility(Region &worldFrontOpaque)
+void Node::computeWorldVisibility(Region &worldFrontOpaque, Region &worldFrontBackdrop)
 {
     if (Q_UNLIKELY(!m_visible)) {
         resetWorldVisibleRecursive();
@@ -326,20 +328,26 @@ void Node::computeWorldVisibility(Region &worldFrontOpaque)
     }
 
     for (Node *child = m_lastChild; child; child = child->m_prev)
-        child->computeWorldVisibility(worldFrontOpaque);
+        child->computeWorldVisibility(worldFrontOpaque, worldFrontBackdrop);
 
     if (!hasContent()) {
         m_worldFrontOpaque = {};
+        m_worldValidRegion = {};
+        m_worldFrontBackdrop = {};
         m_worldVisibleRegion = {};
         return;
     }
 
     m_worldFrontOpaque.setIntersection(worldFrontOpaque.native(), m_worldBounds);
-    m_worldVisibleRegion = Region(m_worldBounds) - m_worldFrontOpaque;
+    m_worldValidRegion = Region(m_worldBounds) - m_worldFrontOpaque;
+    m_worldFrontBackdrop.setIntersection(worldFrontBackdrop.native(), m_worldBounds);
+    m_worldVisibleRegion = Region(m_worldBounds) - m_worldFrontBackdrop;
 
     if (m_needsBackdrop) {
-        if (!m_worldBounds.isEmpty())
+        if (!m_worldBounds.isEmpty()) {
             worldFrontOpaque -= m_worldBounds;
+            worldFrontBackdrop += m_worldBounds;
+        }
         return;
     }
 
@@ -355,11 +363,11 @@ void Node::commitState()
     if (m_visible) {
         m_committedWorldBounds = hasContent() ? m_worldBounds : QRect();
         m_committedSubtreeAABB = m_subtreeAABB;
-        m_committedWorldVisibleRegion = hasContent() ? m_worldVisibleRegion : Region();
+        m_committedWorldValidRegion = hasContent() ? m_worldValidRegion : Region();
     } else {
         m_committedWorldBounds = {};
         m_committedSubtreeAABB = {};
-        m_committedWorldVisibleRegion = {};
+        m_committedWorldValidRegion = {};
     }
     m_committedVisible = m_visible;
     m_dirty = {};

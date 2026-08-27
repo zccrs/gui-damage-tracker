@@ -110,11 +110,10 @@ Example 的 `DemoRenderer` 正序累加 flush（不做 backdrop 加回），
 | `boundingRect()` | 内容局部 | 节点自身内容的边界。 |
 | `opaqueRegion()` | 内容局部 | 能确定完全不透明的内容像素。 |
 | `worldBounds()` | 世界 | 包围盒经过祖先变换后的保守整数边界。 |
-| `worldOpaqueRegion()` | 世界 | 内容局部不透明区域映射到世界坐标的结果。 |
-| `ownDamage()` | 世界 | 节点自身移动、形变、显隐或内容变化。 |
 | `worldFrontOpaqueRegion()` | 世界 | 节点上方已经积累的不透明区域。 |
-| `worldVisibleRegion()` | 世界 | 节点自身 Geometry 的直接可见区域。 |
-| `committedWorldVisibleRegion()` | 世界 | 上一帧提交的可见区域。 |
+| `worldValidRegion()` | 世界 | bounds − 前方不透明（backdrop 打孔，供 cache，不是上屏可见）。 |
+| `worldVisibleRegion()` | 世界 | bounds − 前方 backdrop 覆盖。未脏节点只重绘这里。 |
+| `committedWorldValidRegion()` | 世界 | 上一帧提交的有效区域。 |
 | `Tracker::damageRegion()` | 世界 | 遮挡过滤后的画面变化。 |
 | `Viewport::worldDamageRegion()` | 世界 | 该输出相交后的世界损伤。 |
 | `Viewport::outputDamageRegion()` | 输出 | 世界损伤的保守输出映射。 |
@@ -123,9 +122,8 @@ Example 的 `DemoRenderer` 正序累加 flush（不做 backdrop 加回），
 
 节点不会输出超过 `worldBounds` 的内容。需要更大输出时扩大 `boundingRect`。
 
-被不透明前景完全覆盖的底层节点 `worldVisibleRegion` 为空，其 `ownDamage`
-不会进入 Tracker 损伤。若 Renderer 需要采样被遮挡内容，应自行扩张并
-通过 `Viewport::addFlushRegion()` 追加 extra flush。
+被不透明前景完全覆盖的底层节点 `worldValidRegion` 为空（无 backdrop 打孔时）。
+有 backdrop 时打孔，采样后方仍 valid。未脏节点只重绘 `worldVisibleRegion()`。
 
 ---
 
@@ -161,10 +159,9 @@ Example 的 `DemoRenderer` 正序累加 flush（不做 backdrop 加回），
 
 按前到后（`lastChild -> previousSibling`）：
 
-1. 累积当前节点上方的世界不透明区域。
-2. 写入 `worldFrontOpaqueRegion()`。
-3. 计算 `worldVisibleRegion = worldBounds - frontOpaque`。
-4. `needsBackdrop` 节点覆盖区内，上方不透明不遮挡后方节点（cache 仍要画）。
+1. 累积前方不透明 → `worldValidRegion = bounds − frontOpaque`（backdrop 打孔）。
+2. 累积前方 backdrop 覆盖 → `worldVisibleRegion = bounds − frontBackdrop`。
+3. `needsBackdrop` 覆盖区内，前方不透明不让后方变 invalid（cache 仍要画）。
 
 ### 3. `Tracker::commit(viewports)`：每输出映射
 
@@ -180,8 +177,8 @@ outputDamage =
 
 - 正序累加 `currentDamageRegion`（与 Tracker 第一轮相同，但不把
   backdropDamage 加回，被前景不透明盖住的区域不进 flush）。
-- 画到 `needsBackdrop` 节点时，copy source = `geometry ∩ currentDamageRegion`。
-- copy source 与 backdrop extra damage 不使用 bufferDamage。
+- 画到 `needsBackdrop` 节点时，copy source = `worldBounds ∩ currentDamageRegion`
+  （该 Viewport 本轮绘制累计）。未脏节点只重绘 `worldVisibleRegion()`。
 - `flushRegion` = 上述累加结果（可含采样扩张 extra）。
 - swapchain bufferDamage 只扩大重绘，不扩大 flush。
 

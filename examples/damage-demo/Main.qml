@@ -1503,7 +1503,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "直接可见区域"; color: win.mutedColor }
+                            Label { text: "可见区域"; color: win.mutedColor }
                             Label {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap
@@ -1547,6 +1547,16 @@ ApplicationWindow {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 text: win.sel.subtreeBounds || "—"
                                 color: win.textColor
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "有效区域"; color: win.mutedColor }
+                            Label {
+                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
+                                wrapMode: Text.Wrap
+                                text: win.sel.worldValidRegion || "—"
+                                color: win.sel.worldValidRegion === "空" ? "#e57373" : "#66bb6a"
                             }
                         }
                         RowLayout {

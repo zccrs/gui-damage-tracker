@@ -85,17 +85,23 @@ public:
     void removeAllChildren(); // does not delete
     Node *takeChild(Node *child); // alias of removeChild, returns child
 
-    // After Tracker::prepareFrame(). World fields are viewport-independent.
+    // After Tracker::commit(). World fields are viewport-independent.
     QTransform worldTransform() const { return m_worldTransform; }
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
     const pixman_region32_t *worldOpaqueRegion() const { return m_worldOpaque.native(); }
-    const pixman_region32_t *worldVisibleRegion() const { return m_worldVisibleRegion.native(); }
-    const pixman_region32_t *committedWorldVisibleRegion() const { return m_committedWorldVisibleRegion.native(); }
+    // Bounds minus front opaque. Backdrop punches this so sampled-behind
+    // stays valid for cache; not "on-screen visible".
+    const pixman_region32_t *worldValidRegion() const { return m_worldValidRegion.native(); }
+    const pixman_region32_t *committedWorldValidRegion() const { return m_committedWorldValidRegion.native(); }
     const pixman_region32_t *worldFrontOpaqueRegion() const { return m_worldFrontOpaque.native(); }
-    const pixman_region32_t *ownDamage() const { return m_ownDamage.native(); }
+    // Bounds minus front needsBackdrop coverage. On-screen draw of this node.
+    // Clean nodes only redraw this; dirty nodes also draw the sampled part.
+    const pixman_region32_t *worldVisibleRegion() const { return m_worldVisibleRegion.native(); }
+    const pixman_region32_t *worldFrontBackdropRegion() const { return m_worldFrontBackdrop.native(); }
     const pixman_region32_t *behindDamageRegion() const { return m_behindDamage.native(); }
 
+    // Dirty bits from setters, not "content dirty for this viewport frame".
     bool isDirty() const { return m_dirty != 0; }
     QString dumpTree() const;
 
@@ -111,7 +117,7 @@ protected:
     void updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
                      Region &worldDamage, Region &backdropDamage);
     void clearBehindDamageRecursive();
-    void computeWorldVisibility(Region &worldFrontOpaque);
+    void computeWorldVisibility(Region &worldFrontOpaque, Region &worldFrontBackdrop);
     void resetWorldVisibleRecursive();
     void collectCommittedVisible(Region &visible) const;
     void commitState();
@@ -142,9 +148,11 @@ protected:
     Region m_structuralPresentDamage;
     Region m_pendingRemovedDamage;
     Region m_pendingRemovedPresentDamage;
-    Region m_worldVisibleRegion;
+    Region m_worldValidRegion;
     Region m_worldFrontOpaque;
-    Region m_committedWorldVisibleRegion;
+    Region m_worldVisibleRegion;
+    Region m_worldFrontBackdrop;
+    Region m_committedWorldValidRegion;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;

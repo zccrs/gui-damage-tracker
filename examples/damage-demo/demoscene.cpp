@@ -110,7 +110,7 @@ public:
         if (!n)
             return;
         if (!n->isVisible()) {
-            current += Region(n->ownDamage());
+            current += Region(NodeTestAccess::ownDamage(n));
             return;
         }
         Region extra;
@@ -128,7 +128,7 @@ public:
         }
         if (n->hasContent() && pixman_region32_not_empty(n->worldOpaqueRegion()))
             current -= Region(n->worldOpaqueRegion());
-        current += Region(n->ownDamage());
+        current += Region(NodeTestAccess::ownDamage(n));
         current += extra;
         for (const Node *child = n->firstChild(); child; child = child->nextSibling())
             accumulate(child, current, worldToOutput, expansions, result);
@@ -1359,11 +1359,12 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("visible"), n->isVisible());
     p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("worldVisibleRegion"), formatRegion(n->worldVisibleRegion()));
+    p.insert(QStringLiteral("worldValidRegion"), formatRegion(n->worldValidRegion()));
     p.insert(QStringLiteral("worldFrontOpaque"), formatRegion(n->worldFrontOpaqueRegion()));
     p.insert(QStringLiteral("worldOpaqueRegion"), formatRegion(n->worldOpaqueRegion()));
     p.insert(QStringLiteral("worldBounds"), formatRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), formatRect(n->subtreeBounds()));
-    p.insert(QStringLiteral("ownDamage"), formatRegion(n->ownDamage()));
+    p.insert(QStringLiteral("ownDamage"), formatRegion(NodeTestAccess::ownDamage(n)));
     p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);
