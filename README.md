@@ -84,7 +84,7 @@ Tracker 不负责 RenderTarget、buffer age、RenderPass 或实际 flush。
 - `outputRect()`：输出坐标边界。
 - `worldToOutput()`：世界坐标到输出坐标的变换。
 - `outputDamageRegion()`：世界损伤映射到该输出后的送显候选。
-- `flushRegion()`：送显候选加上 Renderer 通过 `addFlushRegion()` 追加的扩张。
+- `flushRegion()`：Renderer 绘制时写入；Tracker 不填充。
 
 同一轮 `prepareFrame()` 后一次 `commit(viewports)` 映射全部 Viewport。
 
@@ -98,9 +98,8 @@ Renderer 位于 gdt 之外，负责：
 - 记录每个目标的实际 flush。
 - 将最终主输出 `presentDamage` 交给显示 backend。
 
-Example 的 `DemoRenderer` 把 Tracker 的输出损伤作为 present，再并上
-swapchain buffer damage 作为 render/flush。背景采样扩张由真实 Renderer
-在碰到采样节点时自行扩大，再 `addFlushRegion()`。
+Example 的 `DemoRenderer` 正序累加 flush（不做 backdrop 加回），
+`addFlushRegion()` 写入 Viewport。swapchain buffer 只并进重绘区域。
 
 ---
 
@@ -119,7 +118,7 @@ swapchain buffer damage 作为 render/flush。背景采样扩张由真实 Render
 | `Tracker::damageRegion()` | 世界 | 遮挡过滤后的画面变化。 |
 | `Viewport::worldDamageRegion()` | 世界 | 该输出相交后的世界损伤。 |
 | `Viewport::outputDamageRegion()` | 输出 | 世界损伤的保守输出映射。 |
-| `Viewport::flushRegion()` | 输出 | 输出损伤 ∪ Renderer extra flush。 |
+| `Viewport::flushRegion()` | 输出 | Renderer 绘制时计算的送显区域，不含 bufferDamage。 |
 | renderer flush damage | 目标坐标 | Renderer 实际写入该 RenderTarget 的区域。 |
 
 节点不会输出超过 `worldBounds` 的内容。需要更大输出时扩大 `boundingRect`。
@@ -173,18 +172,18 @@ swapchain buffer damage 作为 render/flush。背景采样扩张由真实 Render
 outputDamage =
     mapOuter(worldToOutput, worldDamage)
     ∩ outputRect
-flushRegion = outputDamage
 ```
 
-不可逆矩阵退化为整个 `outputRect`。Renderer 绘制时若扩张采样节点，
-调用 `Viewport::addFlushRegion()`。
+不可逆矩阵退化为整个 `outputRect`。`flushRegion` 保持为空。
 
 ### 4. Renderer
 
-- 按绘制顺序累加 `currentDamageRegion`（与 Tracker 正序相同）。
+- 正序累加 `currentDamageRegion`（与 Tracker 第一轮相同，但不把
+  backdropDamage 加回，被前景不透明盖住的区域不进 flush）。
 - 画到 `needsBackdrop` 节点时，copy source = `geometry ∩ currentDamageRegion`。
-- 并上 swapchain buffer damage 作为实际 render。
-- 采样扩张再 `addFlushRegion()`。
+- copy source 与 backdrop extra damage 不使用 bufferDamage。
+- `flushRegion` = 上述累加结果（可含采样扩张 extra）。
+- swapchain bufferDamage 只扩大重绘，不扩大 flush。
 
 ### 5. 完成本帧
 

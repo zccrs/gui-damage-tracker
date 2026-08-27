@@ -89,11 +89,11 @@ ApplicationWindow {
         return Number.isFinite(n) ? n : (fallback ?? 0)
     }
 
-    function typeLabel(type) {
+    function typeLabel(type, isBackdrop) {
+        if (isBackdrop)
+            return "背景采样节点"
         if (type === "Geometry")
             return "几何节点"
-        if (type === "Backdrop")
-            return "背景采样节点"
         if (type === "Transform")
             return "变换节点"
         return "分组节点"
@@ -607,13 +607,13 @@ ApplicationWindow {
                                 Rectangle {
                                     width: 18; height: 18; radius: 5
                                     anchors.verticalCenter: parent.verticalCenter
-                                    color: modelData.type === "Geometry" ? "#596de8"
-                                         : modelData.type === "Backdrop" ? "#0891b2"
-                                         : modelData.type === "Transform" ? "#d28a2d" : "#556176"
+                                    color: modelData.isBackdrop ? "#0891b2"
+                                         : modelData.type === "Geometry" ? "#2563eb"
+                                         : modelData.type === "Transform" ? "#64748b" : "#475569"
                                     Label {
                                         anchors.centerIn: parent
-                                        text: modelData.type === "Geometry" ? "G"
-                                            : modelData.type === "Backdrop" ? "B"
+                                        text: modelData.isBackdrop ? "B"
+                                            : modelData.type === "Geometry" ? "G"
                                             : modelData.type === "Transform" ? "T" : "·"
                                         color: "#ffffff"
                                         font.pixelSize: 9
@@ -624,12 +624,12 @@ ApplicationWindow {
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: -1
                                     Text {
-                                        text: modelData.name || win.typeLabel(modelData.type)
+                                        text: modelData.name || win.typeLabel(modelData.type, modelData.isBackdrop)
                                         color: modelData.visible ? win.textColor : "#667289"
                                         font.pixelSize: 12
                                     }
                                     Text {
-                                        text: win.typeLabel(modelData.type)
+                                        text: win.typeLabel(modelData.type, modelData.isBackdrop)
                                             + (modelData.occluded ? " · 已遮挡" : "")
                                             + (modelData.culled && !modelData.occluded ? " · 已剔除" : "")
                                             + (!modelData.visible ? " · 已隐藏" : "")
@@ -1119,12 +1119,13 @@ ApplicationWindow {
                         Rectangle {
                             width: 34; height: 34; radius: 9
                             color: scene.selectionType === 2 ? "#0284c7"
-                                 : win.sel.type === "Geometry" ? "#596de8"
-                                 : win.sel.type === "Backdrop" ? "#0891b2"
-                                 : win.sel.type === "Transform" ? "#d28a2d" : "#556176"
+                                 : win.sel.isBackdrop ? "#0891b2"
+                                 : win.sel.type === "Geometry" ? "#2563eb"
+                                 : win.sel.type === "Transform" ? "#64748b" : "#475569"
                             Label {
                                 anchors.centerIn: parent
                                 text: scene.selectionType === 2 ? "V"
+                                    : win.sel.isBackdrop ? "B"
                                     : win.sel.type ? win.sel.type.charAt(0) : "–"
                                 color: "#ffffff"
                                 font.bold: true
@@ -1144,7 +1145,7 @@ ApplicationWindow {
                             }
                             Label {
                                 text: scene.selectionType === 2 ? ("输出视口  ·  ID " + scene.selectedViewportProps.id)
-                                    : win.sel.type ? (win.typeLabel(win.sel.type) + "  ·  ID " + win.sel.id)
+                                    : win.sel.type ? (win.typeLabel(win.sel.type, win.sel.isBackdrop) + "  ·  ID " + win.sel.id)
                                                    : "在节点树或画布中选择节点/视口"
                                 color: win.mutedColor
                                 font.pixelSize: 10
@@ -1330,7 +1331,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Label { text: "包含自身内容 (hasContent)"; color: win.textColor; Layout.fillWidth: true }
+                            Label { text: "是否有内容"; color: win.textColor; Layout.fillWidth: true }
                             Switch {
                                 checked: win.sel.hasContent !== false
                                 onToggled: scene.setHasContentSelected(checked)
@@ -1343,6 +1344,17 @@ ApplicationWindow {
                             visible: !!win.sel.isGeometry
                             Label { text: "完全不透明"; color: win.textColor; Layout.fillWidth: true }
                             Switch { checked: !!win.sel.fullyOpaque; onToggled: scene.setFullyOpaqueSelected(checked) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: !!win.sel.isGeometry
+                            Label { text: "是否背景采样"; color: win.textColor; Layout.fillWidth: true }
+                            Switch {
+                                checked: !!win.sel.isBackdrop
+                                onToggled: scene.setNeedsBackdropSelected(checked)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Renderer 按背景采样节点处理：记录 copy source 并按扩散范围扩大 flush"
+                            }
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: win.borderColor }
@@ -1479,6 +1491,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true; from: 0; to: 80
                                 value: win.num(win.sel.expansion); editable: true
                                 onValueModified: scene.setExpansionSelected(value)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "仅 Renderer 使用：copy source 向外扩散的像素"
                             }
                         }
 

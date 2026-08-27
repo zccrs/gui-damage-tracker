@@ -108,6 +108,8 @@ public:
     Q_INVOKABLE void setRotationSelected(qreal degrees, int axis = 2);
     Q_INVOKABLE void setScaleSelected(qreal sx, qreal sy);
     Q_INVOKABLE void setFullyOpaqueSelected(bool opaque);
+    Q_INVOKABLE void setNeedsBackdropSelected(bool needsBackdrop);
+    Q_INVOKABLE void setExpansionSelected(int px);
     Q_INVOKABLE void markSelectedContentDirty();
     Q_INVOKABLE void markSelectedContentDirtyAt(qreal x, qreal y, qreal w, qreal h);
     Q_INVOKABLE void moveSelectedBy(qreal dx, qreal dy);
@@ -132,6 +134,7 @@ signals:
 private:
     struct Decor {
         QColor color;
+        int expansion = 0;
     };
 
     Gdt::Node *findNode(quint64 id) const;

@@ -74,15 +74,15 @@ void Tracker::prepareFrame()
     Q_ASSERT(m_phase == Phase::Idle);
     m_phase = Phase::Prepared;
     m_damage = {};
-    m_backdropDamage = {};
     if (Q_UNLIKELY(!m_root))
         return;
     if (Q_LIKELY(!m_root->isDirty())) {
         m_root->clearBehindDamageRecursive();
         return;
     }
-    m_root->updateWorld(QTransform(), false, m_damage, m_backdropDamage);
-    m_damage += m_backdropDamage;
+    Region backdropDamage;
+    m_root->updateWorld(QTransform(), false, m_damage, backdropDamage);
+    m_damage += backdropDamage;
 }
 
 void Tracker::mapViewport(Viewport &vp)
@@ -116,8 +116,6 @@ void Tracker::mapViewport(Viewport &vp)
             vp.m_outputDamage = Region(fallback);
         }
     }
-
-    vp.m_flush = vp.m_outputDamage;
 }
 
 void Tracker::commit(QVector<Viewport> &viewports)

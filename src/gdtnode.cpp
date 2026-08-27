@@ -269,8 +269,11 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
                 }
             }
             geo->m_pendingContentDamage = {};
-        } else if (matrixChanged) {
+        } else {
             m_worldBounds = {};
+            m_worldOpaque = {};
+            if (auto *geo = toGeometry())
+                geo->m_pendingContentDamage = {};
         }
     }
 
@@ -281,7 +284,7 @@ void Node::updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
     if (hasContent() && !m_worldOpaque.isEmpty())
         worldDamage -= m_worldOpaque;
     worldDamage += m_ownDamage;
-    QRect subtree = m_worldBounds;
+    QRect subtree = hasContent() ? m_worldBounds : QRect();
     for (Node *child = m_firstChild; child; child = child->m_next) {
         child->updateWorld(m_worldTransform, matrixChanged, worldDamage, backdropDamage);
         if (stateDirty)
@@ -325,13 +328,21 @@ void Node::computeWorldVisibility(Region &worldFrontOpaque)
     for (Node *child = m_lastChild; child; child = child->m_prev)
         child->computeWorldVisibility(worldFrontOpaque);
 
-    m_worldFrontOpaque.setIntersection(worldFrontOpaque.native(), m_worldBounds);
-    m_worldVisibleRegion = hasContent()
-        ? Region(m_worldBounds) - m_worldFrontOpaque
-        : Region();
+    if (!hasContent()) {
+        m_worldFrontOpaque = {};
+        m_worldVisibleRegion = {};
+        return;
+    }
 
-    if (m_needsBackdrop && hasContent() && !m_worldBounds.isEmpty())
-        worldFrontOpaque -= m_worldBounds;
+    m_worldFrontOpaque.setIntersection(worldFrontOpaque.native(), m_worldBounds);
+    m_worldVisibleRegion = Region(m_worldBounds) - m_worldFrontOpaque;
+
+    if (m_needsBackdrop) {
+        if (!m_worldBounds.isEmpty())
+            worldFrontOpaque -= m_worldBounds;
+        return;
+    }
+
     if (Q_UNLIKELY(!m_worldOpaque.isEmpty()))
         worldFrontOpaque += m_worldOpaque;
 }
@@ -342,9 +353,9 @@ void Node::commitState()
         child->commitState();
 
     if (m_visible) {
-        m_committedWorldBounds = m_worldBounds;
+        m_committedWorldBounds = hasContent() ? m_worldBounds : QRect();
         m_committedSubtreeAABB = m_subtreeAABB;
-        m_committedWorldVisibleRegion = m_worldVisibleRegion;
+        m_committedWorldVisibleRegion = hasContent() ? m_worldVisibleRegion : Region();
     } else {
         m_committedWorldBounds = {};
         m_committedSubtreeAABB = {};

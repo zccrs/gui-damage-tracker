@@ -45,6 +45,10 @@ private slots:
     void autoCommitOffMoveDoesNotCommit();
     void holdCurrentKeepsLatestDamageFrame();
     void backdropSceneUsesBackdropLabel();
+    void rendererCoveredBehindDirty();
+    void rendererBufferDoesNotEnlargePresent();
+    void rendererExpansionDilatesPresent();
+    void disablingBackdropDropsCoveredDamage();
     void simulatedRendererProvidesFlush();
     void rotationAxisPersistsAfterCommit();
     void transformInspectorExposesMatrix();
@@ -387,7 +391,15 @@ void tst_Demo::backdropSceneUsesBackdropLabel()
 {
     DemoScene scene;
     scene.loadDemoScene(QStringLiteral("backdrop"));
-    QVERIFY(!scene.treeNodes().isEmpty());
+    bool found = false;
+    for (const QVariant &row : scene.treeNodes()) {
+        const QVariantMap m = row.toMap();
+        if (m.value(QStringLiteral("isBackdrop")).toBool()) {
+            found = true;
+            QVERIFY(m.value(QStringLiteral("name")).toString().contains(QStringLiteral("背景采样")));
+        }
+    }
+    QVERIFY(found);
 }
 
 void tst_Demo::simulatedRendererProvidesFlush()
@@ -398,17 +410,85 @@ void tst_Demo::simulatedRendererProvidesFlush()
 
     const QRegion cover(40, 40, 160, 160);
     const QRegion backdropBounds(100, 100, 140, 140);
-    const QRegion initialPresent = cover + (backdropBounds - cover);
-    QCOMPARE(regionFromRects(scene.renderRects()), initialPresent);
-    QCOMPARE(regionFromRects(scene.presentRects()), initialPresent);
+    const QRegion initial = cover + (backdropBounds - cover);
+    QCOMPARE(regionFromRects(scene.renderRects()), initial);
+    QCOMPARE(regionFromRects(scene.presentRects()), initial);
+}
+
+void tst_Demo::rendererCoveredBehindDirty()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop-cover"));
+    scene.setDemoRunning(false);
 
     scene.markSelectedContentDirtyAt(60, 60, 20, 20);
     const QRegion coveredDirty(180, 180, 20, 20);
     QCOMPARE(regionFromRects(scene.renderRects()), coveredDirty);
-    QCOMPARE(regionFromRects(scene.presentRects()), coveredDirty);
+    QCOMPARE(regionFromRects(scene.presentRects()), QRegion());
+}
+
+void tst_Demo::rendererBufferDoesNotEnlargePresent()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop-cover"));
+    scene.setDemoRunning(false);
+    scene.markSelectedContentDirtyAt(60, 60, 20, 20);
 
     scene.injectSwapchainDamage(0, 120, 120, 20, 20);
     QCOMPARE(regionFromRects(scene.renderRects()), QRegion(120, 120, 20, 20));
+    QCOMPARE(regionFromRects(scene.presentRects()), QRegion());
+}
+
+void tst_Demo::rendererExpansionDilatesPresent()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop"));
+    scene.setDemoRunning(false);
+
+    quint64 backdropId = 0;
+    quint64 wallId = 0;
+    for (const QVariant &row : scene.treeNodes()) {
+        const QVariantMap m = row.toMap();
+        const quint64 id = m.value(QStringLiteral("id")).toULongLong();
+        if (m.value(QStringLiteral("isBackdrop")).toBool())
+            backdropId = id;
+        else if (wallId == 0 && m.value(QStringLiteral("type")).toString() == QLatin1String("Geometry"))
+            wallId = id;
+    }
+    QVERIFY(backdropId != 0);
+    QVERIFY(wallId != 0);
+
+    scene.setSelectedId(backdropId);
+    scene.setExpansionSelected(16);
+    scene.setSelectedId(wallId);
+    scene.markSelectedContentDirtyAt(140, 90, 10, 10);
+
+    const QRegion present = regionFromRects(scene.presentRects());
+    QVERIFY(present.contains(QRect(160, 110, 10, 10)));
+    QVERIFY(present.contains(QRect(150, 100, 1, 1)));
+    QVERIFY(!present.contains(QRect(143, 93, 1, 1)));
+}
+
+void tst_Demo::disablingBackdropDropsCoveredDamage()
+{
+    DemoScene scene;
+    scene.loadDemoScene(QStringLiteral("backdrop-cover"));
+    scene.setDemoRunning(false);
+
+    quint64 backdropId = 0;
+    const quint64 dirtyId = scene.selectedId();
+    for (const QVariant &row : scene.treeNodes()) {
+        const QVariantMap m = row.toMap();
+        if (m.value(QStringLiteral("isBackdrop")).toBool())
+            backdropId = m.value(QStringLiteral("id")).toULongLong();
+    }
+    QVERIFY(backdropId != 0);
+
+    scene.setSelectedId(backdropId);
+    scene.setNeedsBackdropSelected(false);
+    scene.setSelectedId(dirtyId);
+    scene.markSelectedContentDirtyAt(60, 60, 20, 20);
+    QCOMPARE(regionFromRects(scene.renderRects()), QRegion());
     QCOMPARE(regionFromRects(scene.presentRects()), QRegion());
 }
 

@@ -1,19 +1,20 @@
 #include "demoscene.h"
 #include <QDateTime>
+#include <QMargins>
 
 #include <cmath>
 
 using namespace Gdt;
 
 static const QColor kPalette[] = {
-    QColor("#5b8def"),
-    QColor("#9353d3"),
-    QColor("#f5a524"),
-    QColor("#00bcd4"),
-    QColor("#6366f1"),
+    QColor("#2563eb"),
     QColor("#0284c7"),
-    QColor("#8b5cf6"),
-    QColor("#d97706"),
+    QColor("#0ea5e9"),
+    QColor("#1d4ed8"),
+    QColor("#0369a1"),
+    QColor("#38bdf8"),
+    QColor("#1e40af"),
+    QColor("#075985"),
 };
 
 static QString typeString(Node::Type t)
@@ -103,6 +104,7 @@ class DemoRenderer
 public:
     static void accumulate(const Node *n, Region &current,
                            const QTransform &worldToOutput,
+                           const QHash<quint64, int> &expansions,
                            DemoRenderResult *result)
     {
         if (!n)
@@ -111,32 +113,44 @@ public:
             current += Region(n->ownDamage());
             return;
         }
+        Region extra;
         if (n->needsBackdrop() && n->hasContent()) {
             Region source = Region(n->worldBounds()) & current;
             if (!source.isEmpty()) {
                 result->passes.append({DemoPassType::EffectInput, n,
                                        mapRegionOuter(worldToOutput, source)});
+                const int expansion = expansions.value(n->id());
+                extra = expansion > 0
+                    ? dilateRegion(source, QMargins(expansion, expansion, expansion, expansion))
+                    : source;
+                extra &= n->worldBounds();
             }
         }
         if (n->hasContent() && pixman_region32_not_empty(n->worldOpaqueRegion()))
             current -= Region(n->worldOpaqueRegion());
         current += Region(n->ownDamage());
+        current += extra;
         for (const Node *child = n->firstChild(); child; child = child->nextSibling())
-            accumulate(child, current, worldToOutput, result);
+            accumulate(child, current, worldToOutput, expansions, result);
     }
 
     static DemoRenderResult render(const Node *root,
-                                   const Tracker::Viewport &viewport,
-                                   const Region &bufferDamage)
+                                   Tracker::Viewport &viewport,
+                                   const Region &bufferDamage,
+                                   const QHash<quint64, int> &expansions)
     {
         DemoRenderResult result;
-        result.presentDamage = Region(viewport.outputDamageRegion());
         Region current;
-        accumulate(root, current, viewport.worldToOutput(), &result);
-        result.renderDamage = result.presentDamage + bufferDamage;
+        accumulate(root, current, viewport.worldToOutput(), expansions, &result);
+        Region flush = mapRegionOuter(viewport.worldToOutput(), current);
+        if (!viewport.outputRect().isEmpty())
+            flush &= viewport.outputRect();
+        viewport.addFlushRegion(flush.native());
+        result.presentDamage = Region(viewport.flushRegion());
+        result.renderDamage = Region(viewport.outputDamageRegion()) + bufferDamage;
         if (!viewport.outputRect().isEmpty())
             result.renderDamage &= viewport.outputRect();
-        result.flushDamage = result.renderDamage;
+        result.flushDamage = result.presentDamage;
         if (!result.renderDamage.isEmpty()) {
             result.passes.append({DemoPassType::Main, nullptr,
                                   result.renderDamage});
@@ -550,7 +564,7 @@ void DemoScene::addBackdrop()
     n->setBoundingRect(QRectF(40, 40, 280, 200));
     n->setNeedsBackdrop(true);
     parentForInsert()->appendChild(n);
-    m_decor.insert(n->id(), Decor{QColor("#00bcd4")});
+    m_decor.insert(n->id(), Decor{QColor("#0891b2"), 16});
     setSelectedId(n->id());
     maybeCommit();
 }
@@ -673,6 +687,29 @@ void DemoScene::setFullyOpaqueSelected(bool opaque)
     maybeCommit();
 }
 
+void DemoScene::setNeedsBackdropSelected(bool needsBackdrop)
+{
+    Node *n = findNode(m_selectedId);
+    if (!n)
+        return;
+    n->setNeedsBackdrop(needsBackdrop);
+    if (needsBackdrop && m_decor.contains(n->id()) && m_decor[n->id()].expansion <= 0)
+        m_decor[n->id()].expansion = 16;
+    rebuildLists();
+    refreshSelectedProps();
+    maybeCommit();
+}
+
+void DemoScene::setExpansionSelected(int px)
+{
+    Node *n = findNode(m_selectedId);
+    if (!n || !n->needsBackdrop())
+        return;
+    px = qBound(0, px, 80);
+    m_decor[n->id()].expansion = px;
+    maybeCommit();
+}
+
 
 
 void DemoScene::markSelectedContentDirty()
@@ -774,13 +811,13 @@ void DemoScene::loadPreset(const QString &name)
         back->setName(QStringLiteral("后层不透明节点"));
         back->setBoundingRect(QRectF(80, 80, 260, 200));
         back->setFullyOpaque(true);
-        m_decor.insert(back->id(), Decor{QColor("#5b8def")});
+        m_decor.insert(back->id(), Decor{QColor("#2563eb")});
 
         auto *front = new GeometryNode;
         front->setName(QStringLiteral("前层不透明节点"));
         front->setBoundingRect(QRectF(160, 140, 220, 180));
         front->setFullyOpaque(true);
-        m_decor.insert(front->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(front->id(), Decor{QColor("#1d4ed8")});
 
         m_root->appendChild(back);
         m_root->appendChild(front);
@@ -796,12 +833,13 @@ void DemoScene::loadPreset(const QString &name)
         bg->setName(QStringLiteral("模糊层"));
         bg->setBoundingRect(QRectF(140, 100, 280, 200));
         bg->setNeedsBackdrop(true);
+        m_decor.insert(bg->id(), Decor{QColor("#0891b2"), 16});
 
         auto *chip = new GeometryNode;
         chip->setName(QStringLiteral("前景卡片"));
         chip->setBoundingRect(QRectF(200, 160, 80, 60));
         chip->setFullyOpaque(true);
-        m_decor.insert(chip->id(), Decor{QColor("#f5a524")});
+        m_decor.insert(chip->id(), Decor{QColor("#0369a1")});
 
         m_root->appendChild(wall);
         m_root->appendChild(bg);
@@ -816,13 +854,13 @@ void DemoScene::loadPreset(const QString &name)
         g->setName(QStringLiteral("卡片"));
         g->setBoundingRect(QRectF(80, 80, 160, 120));
         g->setFullyOpaque(true);
-        m_decor.insert(g->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(g->id(), Decor{QColor("#1d4ed8")});
 
         auto *g2 = new GeometryNode;
         g2->setName(QStringLiteral("徽标"));
         g2->setBoundingRect(QRectF(200, 140, 90, 70));
         g2->setFullyOpaque(true);
-        m_decor.insert(g2->id(), Decor{QColor("#6366f1")});
+        m_decor.insert(g2->id(), Decor{QColor("#0284c7")});
 
         tr->appendChild(g);
         tr->appendChild(g2);
@@ -847,7 +885,7 @@ void DemoScene::buildDemoScene(const QString &name)
         auto *content = new GeometryNode;
         content->setName(QStringLiteral("局部变化内容"));
         content->setBoundingRect(QRectF(100, 110, 240, 150));
-        m_decor.insert(content->id(), Decor{QColor("#f5a524")});
+        m_decor.insert(content->id(), Decor{QColor("#0369a1")});
         m_root->appendChild(wall);
         m_root->appendChild(content);
         m_demoNodeA = content->id();
@@ -866,12 +904,13 @@ void DemoScene::buildDemoScene(const QString &name)
         backdrop->setName(QStringLiteral("背景采样"));
         backdrop->setBoundingRect(QRectF(150, 100, 280, 200));
         backdrop->setNeedsBackdrop(true);
+        m_decor.insert(backdrop->id(), Decor{QColor("#0891b2"), 16});
 
         auto *chip = new GeometryNode;
         chip->setName(QStringLiteral("前景内容"));
         chip->setBoundingRect(QRectF(230, 165, 90, 70));
         chip->setFullyOpaque(true);
-        m_decor.insert(chip->id(), Decor{QColor("#f5a524")});
+        m_decor.insert(chip->id(), Decor{QColor("#0369a1")});
         m_root->appendChild(wall);
         m_root->appendChild(backdrop);
         m_root->appendChild(chip);
@@ -887,18 +926,19 @@ void DemoScene::buildDemoScene(const QString &name)
         dirty->setName(QStringLiteral("底层脏内容"));
         dirty->setBoundingRect(QRectF(120, 120, 80, 80));
         dirty->setFullyOpaque(true);
-        m_decor.insert(dirty->id(), Decor{QColor("#5b8def")});
+        m_decor.insert(dirty->id(), Decor{QColor("#2563eb")});
 
         auto *backdrop = new GeometryNode;
         backdrop->setName(QStringLiteral("背景采样"));
         backdrop->setBoundingRect(QRectF(100, 100, 140, 140));
         backdrop->setNeedsBackdrop(true);
+        m_decor.insert(backdrop->id(), Decor{QColor("#0891b2"), 0});
 
         auto *cover = new GeometryNode;
         cover->setName(QStringLiteral("顶层不透明"));
         cover->setBoundingRect(QRectF(40, 40, 160, 160));
         cover->setFullyOpaque(true);
-        m_decor.insert(cover->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(cover->id(), Decor{QColor("#1d4ed8")});
 
         m_root->appendChild(dirty);
         m_root->appendChild(backdrop);
@@ -922,7 +962,7 @@ void DemoScene::buildDemoScene(const QString &name)
         geometry->setName(QStringLiteral("旋转卡片"));
         geometry->setBoundingRect(QRectF(-110, -70, 220, 140));
         geometry->setFullyOpaque(true);
-        m_decor.insert(geometry->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(geometry->id(), Decor{QColor("#1d4ed8")});
         transform->appendChild(geometry);
         m_root->appendChild(transform);
         m_demoNodeA = transform->id();
@@ -956,19 +996,19 @@ void DemoScene::buildDemoScene(const QString &name)
         wall->setName(QStringLiteral("后方静止底板"));
         wall->setBoundingRect(QRectF(50, 60, 480, 280));
         wall->setFullyOpaque(true);
-        m_decor.insert(wall->id(), Decor{QColor("#5b8def")});
+        m_decor.insert(wall->id(), Decor{QColor("#2563eb")});
 
         auto *badge = new GeometryNode;
         badge->setName(QStringLiteral("被遮挡内容"));
         badge->setBoundingRect(QRectF(170, 100, 200, 160));
         badge->setFullyOpaque(true);
-        m_decor.insert(badge->id(), Decor{QColor("#00bcd4")});
+        m_decor.insert(badge->id(), Decor{QColor("#0891b2")});
 
         auto *cover = new GeometryNode;
         cover->setName(QStringLiteral("移开的遮挡窗口"));
         cover->setBoundingRect(QRectF(150, 80, 240, 200));
         cover->setFullyOpaque(true);
-        m_decor.insert(cover->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(cover->id(), Decor{QColor("#1d4ed8")});
 
         m_root->appendChild(wall);
         m_root->appendChild(badge);
@@ -983,12 +1023,12 @@ void DemoScene::buildDemoScene(const QString &name)
     back->setName(QStringLiteral("被遮挡内容"));
     back->setBoundingRect(QRectF(80, 80, 260, 200));
     back->setFullyOpaque(true);
-    m_decor.insert(back->id(), Decor{QColor("#5b8def")});
+    m_decor.insert(back->id(), Decor{QColor("#2563eb")});
         auto *front = new GeometryNode;
         front->setName(QStringLiteral("移动遮挡层"));
         front->setBoundingRect(QRectF(160, 140, 220, 180));
         front->setFullyOpaque(true);
-        m_decor.insert(front->id(), Decor{QColor("#9353d3")});
+        m_decor.insert(front->id(), Decor{QColor("#1d4ed8")});
         m_root->appendChild(back);
     m_root->appendChild(front);
     m_demoNodeA = back->id();
@@ -1093,21 +1133,23 @@ void DemoScene::updateDamage(bool rebuildScene)
         vp.finishFrame();
     m_tracker.prepareFrame();
     m_tracker.commit(vps);
-    const DemoRenderResult renderA = DemoRenderer::render(m_root.get(), vps[0], bufferDamageA);
-    const DemoRenderResult renderB = DemoRenderer::render(m_root.get(), vps[1], bufferDamageB);
+    QHash<quint64, int> expansions;
+    for (auto it = m_decor.cbegin(); it != m_decor.cend(); ++it)
+        expansions.insert(it.key(), it.value().expansion);
+    const DemoRenderResult renderA = DemoRenderer::render(m_root.get(), vps[0], bufferDamageA, expansions);
+    const DemoRenderResult renderB = DemoRenderer::render(m_root.get(), vps[1], bufferDamageB, expansions);
     m_injectedBufferDamageA = {};
     m_injectedBufferDamageB = {};
     m_tracker.finishFrame();
 
-    // Render/flush regions include all passes; present regions only describe
-    // final output pixels which differ from the previous displayed frame.
-    m_renderRects = regionToRects(renderA.flushDamage);
-    m_renderRectsB = regionToRects(renderB.flushDamage);
+    // Redraw includes buffer repair; present/flush is scene output only.
+    m_renderRects = regionToRects(renderA.renderDamage);
+    m_renderRectsB = regionToRects(renderB.renderDamage);
     m_presentRects = regionToRects(renderA.presentDamage);
     m_presentRectsB = regionToRects(renderB.presentDamage);
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const Region combinedRender = renderA.flushDamage + renderB.flushDamage;
+    const Region combinedRender = renderA.renderDamage + renderB.renderDamage;
     if (!combinedRender.isEmpty()) {
         QVariantMap frame;
         frame.insert(QStringLiteral("timestamp"), now);
@@ -1206,7 +1248,7 @@ void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *pa
                  !pixman_region32_not_empty(n->worldOpaqueRegion()));
         const QColor c = m_decor.value(n->id()).color;
         v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->name().contains(QStringLiteral("背景")) || n->name().contains(QStringLiteral("模糊")));
+        v.insert(QStringLiteral("isBackdrop"), n->needsBackdrop());
         v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
     }
@@ -1223,8 +1265,11 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         label = QStringLiteral("根节点 #%1").arg(n->id());
     } else if (auto *geometry = n->toGeometry()) {
         const QRectF r = geometry->boundingRect();
-        const QString typeDesc = geometry->isFullyOpaque() ? QStringLiteral("不透明几何")
-                                                           : QStringLiteral("透明几何");
+        const QString typeDesc = n->needsBackdrop()
+            ? (geometry->isFullyOpaque() ? QStringLiteral("不透明背景采样")
+                                         : QStringLiteral("背景采样"))
+            : (geometry->isFullyOpaque() ? QStringLiteral("不透明几何")
+                                         : QStringLiteral("透明几何"));
         label = QStringLiteral("%1 #%2 [%3x%4]")
                     .arg(typeDesc)
                     .arg(n->id())
@@ -1246,6 +1291,7 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
     row.insert(QStringLiteral("id"), n->id());
     row.insert(QStringLiteral("name"), displayName);
     row.insert(QStringLiteral("type"), typeString(n->type()));
+    row.insert(QStringLiteral("isBackdrop"), n->needsBackdrop());
     row.insert(QStringLiteral("depth"), depth);
     row.insert(QStringLiteral("visible"), n->isVisible());
     row.insert(QStringLiteral("childCount"), n->childCount());
@@ -1288,7 +1334,7 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
                  !pixman_region32_not_empty(n->worldOpaqueRegion()));
         const QColor c = m_decor.value(n->id()).color;
         v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->name().contains(QStringLiteral("背景")) || n->name().contains(QStringLiteral("模糊")));
+        v.insert(QStringLiteral("isBackdrop"), n->needsBackdrop());
         v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
     }
@@ -1323,6 +1369,7 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);
     p.insert(QStringLiteral("isTransform"), n->toTransform() != nullptr);
     p.insert(QStringLiteral("isBackdrop"), n->needsBackdrop());
+    p.insert(QStringLiteral("expansion"), m_decor.value(n->id()).expansion);
     p.insert(QStringLiteral("canDelete"), n != m_root.get());
     p.insert(QStringLiteral("canRaise"), n->parent() && n->nextSibling());
     p.insert(QStringLiteral("canLower"), n->parent() && n->previousSibling());

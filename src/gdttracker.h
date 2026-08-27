@@ -9,7 +9,7 @@
 
 namespace Gdt {
 
-// Per-output mapping of scene damage. Renderer adds extra flush after draw.
+// Per-output mapping of scene damage. flushRegion is filled by the Renderer.
 class Viewport
 {
 public:
@@ -66,15 +66,12 @@ public:
     void finishFrame();
 
     const pixman_region32_t *damageRegion() const { return m_damage.native(); }
-    const pixman_region32_t *backdropDamageRegion() const { return m_backdropDamage.native(); }
-
 
 private:
     void mapViewport(Viewport &viewport);
 
     Node *m_root = nullptr;
     Region m_damage;
-    Region m_backdropDamage;
     Phase m_phase = Phase::Idle;
 };
 
