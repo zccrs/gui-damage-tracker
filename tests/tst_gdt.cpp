@@ -1,9 +1,46 @@
 #include "gdt.h"
 
 #include <QMatrix4x4>
+#include <QRegion>
+
 #include <QTest>
+#include <utility>
+
 
 using namespace Gdt;
+
+static QRegion toQRegion(const pixman_region32_t *region)
+{
+    QRegion result;
+    if (!region)
+        return result;
+    int count = 0;
+    const pixman_box32_t *boxes = pixman_region32_rectangles(region, &count);
+    for (int i = 0; i < count; ++i) {
+        result += QRect(boxes[i].x1, boxes[i].y1,
+                        boxes[i].x2 - boxes[i].x1,
+                        boxes[i].y2 - boxes[i].y1);
+    }
+    return result;
+}
+
+static QRegion toQRegion(const Region &region)
+{
+    return toQRegion(region.native());
+}
+
+static QRegion toQRegion(const QRegion &region)
+{
+    return region;
+}
+
+static Region toPixmanRegion(const QRegion &region)
+{
+    Region result;
+    for (const QRect &rect : region)
+        result += rect;
+    return result;
+}
 
 static QString regionStr(const QRegion &r)
 {
@@ -24,12 +61,13 @@ static QString regionStr(const QRegion &r)
 
 #define COMPARE_REGION(actual, expected)                                                       \
     do {                                                                                       \
-        const QRegion _gdtActual = (actual);                                                   \
-        const QRegion _gdtExpected = (expected);                                               \
-        QVERIFY2(_gdtActual == _gdtExpected,                                                   \
+        const QRegion _gdtActual = toQRegion(actual);                                          \
+        const QRegion _gdtExpected = toQRegion(expected);                                      \
+        QVERIFY2((_gdtActual ^ _gdtExpected).isEmpty(),                                        \
                  qPrintable(QStringLiteral("actual=%1 expected=%2")                            \
                                 .arg(regionStr(_gdtActual), regionStr(_gdtExpected))));        \
     } while (0)
+
 
 class TestTracker : public Tracker
 {
@@ -41,10 +79,10 @@ public:
     {
         m_vps[0].setOutputRect({});
         m_vps[0].setWorldToOutput({});
-        m_vps[0].finishFrame(); // prime: clear dirty from set calls
+        m_vps[0].finishFrame();
         prepareFrame();
-        commit(m_vps[0]);
-        QRegion result = m_vps[0].accumulatedDamage();
+        Tracker::commit(m_vps);
+        QRegion result = toQRegion(m_vps[0].outputDamageRegion());
         finishFrame();
         return result;
     }
@@ -53,10 +91,10 @@ public:
     {
         m_vps[0].setOutputRect(outputRect);
         m_vps[0].setWorldToOutput({});
-        m_vps[0].finishFrame(); // prime: clear dirty from set calls
+        m_vps[0].finishFrame();
         prepareFrame();
-        commit(m_vps[0]);
-        QRegion result = m_vps[0].accumulatedDamage();
+        Tracker::commit(m_vps);
+        QRegion result = toQRegion(m_vps[0].outputDamageRegion());
         finishFrame();
         return result;
     }
@@ -65,11 +103,34 @@ private:
     QVector<Viewport> m_vps{Viewport()};
 };
 
+static void commitViewports(Tracker &tracker, Tracker::Viewport &viewport)
+{
+    QVector<Tracker::Viewport> viewports{viewport};
+    tracker.commit(viewports);
+    viewport = std::move(viewports[0]);
+}
+
+static void commitViewports(Tracker &tracker, Tracker::Viewport &first,
+                            Tracker::Viewport &second)
+{
+    QVector<Tracker::Viewport> viewports{first, second};
+    tracker.commit(viewports);
+    first = std::move(viewports[0]);
+    second = std::move(viewports[1]);
+}
+
+
+
+
+
+
 class tst_Gdt : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void regionBooleanParity();
+    void regionCopyMoveAndNativeHandle();
     void emptyCommit();
     void addGeometry();
     void idempotentCommit();
@@ -92,12 +153,7 @@ private slots:
     void transparentDoesNotOcclude();
     void parentGeometryBehindChildren();
     void occludedRegionReported();
-    void backdropNoExpansion();
-    void expansion();
-    void backdropSamplesOutsideBounds();
-    void backdropOwnDamageDoesNotInduce();
-    void backdropClipBleed();
-    void nestedBackdrop();
+    void invalidViewportTransformFallsBackConservatively();
     void insertBetweenSiblings();
     void reparent();
     void raiseLowersZOrder();
@@ -118,7 +174,6 @@ private slots:
     void fractionalTranslationOverestimates();
     void moveOpaqueRevealsBehind();
     void movingFrontDoesNotDamageCleanBackWhole();
-    void backdropWithTransform();
     void contentDamageUnderOpaqueSibling();
     void partiallyOccludedMoveAvoidsOpaqueFront();
     void fullyOccludedMoveProducesNoDamage();
@@ -133,8 +188,8 @@ private slots:
     void contentDirtyOnNewNode();
     void removeUncommittedNode();
     void siblingOrderPaint();
-    void backdropDoesNotSeeFrontDamageAsRequired();
     void twoViewportsIndependentDamage();
+
     void twoViewportsIndependentOcclusion();
     void twoViewportsSingleCommitKeepsBoth();
     void twoViewportsIdempotent();
@@ -163,10 +218,53 @@ private slots:
     void worldVisibleHideShow();
     void worldVisibleNegativeCoords();
     void worldVisibleRotate90();
-    void backdropSeparatesInputFromDirectVisibility();
-    void opaqueCoverHidesWithoutBackdrop();
-    void backdropProcessorViewportTransform();
+    void backdropKeepsCoveredBehindDamage();
+    void backdropPunchesFrontOpaque();
+    void backdropBehindDamageMatchesAccumulator();
+
 };
+void tst_Gdt::regionBooleanParity()
+{
+    Region a;
+    a += QRect(-10, -5, 20, 10);
+    a += QRect(20, 5, 8, 12);
+    Region b;
+    b += QRect(0, -8, 24, 20);
+    b += QRect(25, 10, 8, 8);
+
+    const QRegion qa = QRegion(-10, -5, 20, 10) + QRegion(20, 5, 8, 12);
+    const QRegion qb = QRegion(0, -8, 24, 20) + QRegion(25, 10, 8, 8);
+
+    COMPARE_REGION(a + b, qa + qb);
+    COMPARE_REGION(a & b, qa & qb);
+    COMPARE_REGION(a - b, qa - qb);
+    QCOMPARE(a.rectCount(), qa.rectCount());
+    QCOMPARE(a.boundingRect(), qa.boundingRect());
+}
+
+void tst_Gdt::regionCopyMoveAndNativeHandle()
+{
+    Region original;
+    original += QRect(-20, 3, 7, 9);
+    original += QRect(4, 8, 11, 6);
+
+    Region copy(original);
+    COMPARE_REGION(copy, original);
+
+    Region moved(std::move(copy));
+    COMPARE_REGION(moved, original);
+    COMPARE_REGION(copy, QRegion());
+    QVERIFY(pixman_region32_equal(moved.native(), original.native()));
+
+    Region assigned;
+    assigned = moved;
+    COMPARE_REGION(assigned, original);
+
+    Region moveAssigned;
+    moveAssigned = std::move(assigned);
+    COMPARE_REGION(moveAssigned, original);
+    COMPARE_REGION(assigned, QRegion());
+}
 
 void tst_Gdt::emptyCommit()
 {
@@ -527,135 +625,28 @@ void tst_Gdt::occludedRegionReported()
     COMPARE_REGION(back->worldVisibleRegion(), QRegion(0, 0, 10, 30));
 }
 
-void tst_Gdt::backdropNoExpansion()
+void tst_Gdt::invalidViewportTransformFallsBackConservatively()
 {
     Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 100, 100));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(20, 20, 40, 40));
-    bg->setExpansion(0);
-    root.appendChild(behind);
-    root.appendChild(bg);
+    auto *g = new GeometryNode;
+    g->setBoundingRect(QRectF(20, 20, 40, 40));
+    root.appendChild(g);
 
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(25, 25, 2, 2));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(25, 25, 2, 2));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(25, 25, 2, 2));
+    QTransform singular;
+    singular.scale(0, 1);
+    Tracker tracker(&root);
+    QVector<Tracker::Viewport> viewports{
+        {QRect(0, 0, 200, 100), singular},
+    };
+    viewports[0].finishFrame();
+    tracker.prepareFrame();
+    tracker.commit(viewports);
+    COMPARE_REGION(viewports[0].outputDamageRegion(),
+                   QRegion(0, 0, 200, 100));
+    COMPARE_REGION(viewports[0].flushRegion(),
+                   QRegion(0, 0, 200, 100));
+    tracker.finishFrame();
 }
-
-
-void tst_Gdt::expansion()
-{
-    Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 200, 200));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(0, 0, 200, 200));
-    bg->setExpansion(5);
-    root.appendChild(behind);
-    root.appendChild(bg);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(50, 50, 1, 1));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(50, 50, 1, 1));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(45, 45, 11, 11));
-}
-
-void tst_Gdt::backdropOwnDamageDoesNotInduce()
-{
-    Node root;
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(0, 0, 100, 100));
-    bg->setExpansion(5);
-    root.appendChild(bg);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    bg->markContentDirty(QRect(50, 50, 1, 1));
-    COMPARE_REGION(tracker.commit(), QRegion(50, 50, 1, 1));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion());
-}
-
-void tst_Gdt::backdropSamplesOutsideBounds()
-{
-    Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 200, 200));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(50, 50, 20, 20));
-    bg->setExpansion(5);
-    bg->setClip(true);
-    root.appendChild(behind);
-    root.appendChild(bg);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    // 3px left of the backdrop node, inside the 5px sample margin.
-    behind->markContentDirty(QRect(47, 55, 1, 1));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(47, 55, 1, 1));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(50, 50, 3, 11));
-}
-
-void tst_Gdt::backdropClipBleed()
-{
-    Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 200, 200));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(50, 50, 20, 20));
-    bg->setExpansion(4);
-    bg->setClip(false);
-    root.appendChild(behind);
-    root.appendChild(bg);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(50, 50, 2, 2));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(50, 50, 2, 2));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(46, 46, 10, 10));
-    COMPARE_REGION(bg->effectOutputBounds(), QRegion(46, 46, 28, 28));
-    COMPARE_REGION(bg->effectOutputVisibleRegion(), QRegion(46, 46, 28, 28));
-}
-
-
-void tst_Gdt::nestedBackdrop()
-{
-    Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 300, 300));
-    auto *inner = new BackdropNode;
-    inner->setBoundingRect(QRectF(0, 0, 300, 300));
-    inner->setExpansion(2);
-    auto *outer = new BackdropNode;
-    outer->setBoundingRect(QRectF(0, 0, 300, 300));
-    outer->setExpansion(3);
-    root.appendChild(behind);
-    root.appendChild(inner);
-    root.appendChild(outer);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(100, 100, 1, 1));
-    tracker.commit();
-    COMPARE_REGION(inner->effectInputDamage(), QRegion(100, 100, 1, 1));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(inner), QRegion(98, 98, 5, 5));
-    COMPARE_REGION(outer->effectInputDamage(), QRegion(98, 98, 5, 5));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(outer), QRegion(95, 95, 11, 11));
-}
-
 
 void tst_Gdt::insertBetweenSiblings()
 {
@@ -754,13 +745,13 @@ void tst_Gdt::viewportTransformMapsDamage()
     };
 
     QVector<Tracker::Viewport> vps{viewport};
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(20, 10, 8, 6));
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion(20, 10, 8, 6));
     tracker.finishFrame();
 
     g->markContentDirty(QRect(1, 1, 1, 1));
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(22, 12, 2, 2));
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion(22, 12, 2, 2));
     tracker.finishFrame();
 }
 
@@ -776,15 +767,15 @@ void tst_Gdt::viewportFractionalScaleMapsExactly()
                          QTransform::fromScale(1.25, 1.25)};
     vp.finishFrame();
     tracker.prepareFrame();
-    tracker.commit(vp);
-    COMPARE_REGION(vp.accumulatedDamage(), QRegion(12, 25, 11, 5));
+    commitViewports(tracker, vp);
+    COMPARE_REGION(vp.outputDamageRegion(), QRegion(12, 25, 11, 5));
     tracker.finishFrame();
 
     g->markContentDirty(QRect(1, 1, 2, 2));
     vp.finishFrame();
     tracker.prepareFrame();
-    tracker.commit(vp);
-    COMPARE_REGION(vp.accumulatedDamage(), QRegion(13, 26, 4, 3));
+    commitViewports(tracker, vp);
+    COMPARE_REGION(vp.outputDamageRegion(), QRegion(13, 26, 4, 3));
     tracker.finishFrame();
 }
 
@@ -801,15 +792,15 @@ void tst_Gdt::viewportArbitraryRotationMapsExactly()
     Tracker::Viewport vp{QRect(), rotation};
     vp.finishFrame();
     tracker.prepareFrame();
-    tracker.commit(vp);
-    COMPARE_REGION(vp.accumulatedDamage(), QRegion(-3, 13, 23, 21));
+    commitViewports(tracker, vp);
+    COMPARE_REGION(vp.outputDamageRegion(), QRegion(-3, 13, 23, 21));
     tracker.finishFrame();
 
     g->markContentDirty(QRect(5, 2, 4, 3));
     vp.finishFrame();
     tracker.prepareFrame();
-    tracker.commit(vp);
-    COMPARE_REGION(vp.accumulatedDamage(), QRegion(4, 18, 6, 5));
+    commitViewports(tracker, vp);
+    COMPARE_REGION(vp.outputDamageRegion(), QRegion(4, 18, 6, 5));
     tracker.finishFrame();
 }
 void tst_Gdt::viewportTransformsCullIndependently()
@@ -824,9 +815,9 @@ void tst_Gdt::viewportTransformsCullIndependently()
         {QRect(0, 0, 50, 50), QTransform()},
         {QRect(0, 0, 50, 50), QTransform::fromTranslate(-100, 0)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion());
-    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(0, 0, 20, 20));
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion());
+    COMPARE_REGION(vps[1].outputDamageRegion(), QRegion(0, 0, 20, 20));
     tracker.finishFrame();
 }
 
@@ -839,14 +830,13 @@ void tst_Gdt::viewportTransformMapsOcclusion()
     auto *front = new GeometryNode;
     front->setBoundingRect(QRectF(10, 10, 10, 10));
     front->setFullyOpaque(true);
-    root.appendChild(back);
     root.appendChild(front);
 
     TestTracker tracker(&root);
     QVector<Tracker::Viewport> vps{
         {QRect(0, 0, 100, 100), QTransform::fromScale(2, 2)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
     tracker.finishFrame();
 
 }
@@ -861,11 +851,11 @@ void tst_Gdt::fullyOpaqueFlag()
 
     TestTracker tracker(&root);
     tracker.commit();
-    QCOMPARE(g->worldOpaqueRegion(), QRegion(0, 0, 16, 16));
+    COMPARE_REGION(g->worldOpaqueRegion(), QRegion(0, 0, 16, 16));
 
     g->setBoundingRect(QRectF(80, 80, 32, 16));
     tracker.commit();
-    QCOMPARE(g->worldOpaqueRegion(), QRegion(80, 80, 32, 16));
+    COMPARE_REGION(g->worldOpaqueRegion(), QRegion(80, 80, 32, 16));
     COMPARE_REGION(g->opaqueRegion(), QRegion(0, 0, 32, 16));
 }
 
@@ -874,7 +864,8 @@ void tst_Gdt::opaqueRegionUpdate()
     Node root;
     auto *g = new GeometryNode;
     g->setBoundingRect(QRectF(0, 0, 40, 40));
-    g->setOpaqueRegion(QRegion(0, 0, 10, 40));
+    const Region opaqueStrip(0, 0, 10, 40);
+    g->setOpaqueRegion(opaqueStrip.native());
     auto *back = new GeometryNode;
     back->setBoundingRect(QRectF(0, 0, 40, 40));
     root.appendChild(back);
@@ -1011,7 +1002,6 @@ void tst_Gdt::movingFrontDoesNotDamageCleanBackWhole()
     Node root;
     auto *back = new GeometryNode;
     back->setBoundingRect(QRectF(0, 0, 100, 100));
-    back->setFullyOpaque(true);
     auto *front = new GeometryNode;
     front->setBoundingRect(QRectF(25, 0, 50, 100));
     front->setFullyOpaque(true);
@@ -1023,33 +1013,10 @@ void tst_Gdt::movingFrontDoesNotDamageCleanBackWhole()
 
     front->setBoundingRect(QRectF(35, 0, 50, 100));
     const QRegion damage = tracker.commit();
-
     COMPARE_REGION(NodeTestAccess::ownDamage(back), QRegion());
     COMPARE_REGION(damage, QRegion(25, 0, 60, 100));
 }
 
-void tst_Gdt::backdropWithTransform()
-{
-    Node root;
-    auto *tr = new TransformNode;
-    tr->setTranslation(30, 40);
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 50, 50));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(0, 0, 50, 50));
-    bg->setExpansion(2);
-    tr->appendChild(behind);
-    tr->appendChild(bg);
-    root.appendChild(tr);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(10, 10, 1, 1));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(40, 50, 1, 1));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(38, 48, 5, 5));
-}
 
 void tst_Gdt::contentDamageUnderOpaqueSibling()
 {
@@ -1222,6 +1189,24 @@ void tst_Gdt::matrix4x4()
     COMPARE_REGION(tracker.commit(), QRegion(15, 25, 4, 4));
 }
 
+void tst_Gdt::siblingOrderPaint()
+{
+    Node root;
+    auto *back = new GeometryNode;
+    back->setBoundingRect(QRectF(0, 0, 40, 40));
+    back->setFullyOpaque(true);
+    auto *front = new GeometryNode;
+    front->setBoundingRect(QRectF(0, 0, 40, 40));
+    front->setFullyOpaque(true);
+    root.appendChild(back);
+    root.appendChild(front);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+    COMPARE_REGION(front->worldVisibleRegion(), QRegion(0, 0, 40, 40));
+    COMPARE_REGION(back->worldVisibleRegion(), QRegion());
+}
+
 void tst_Gdt::firstCommitAppearing()
 {
     Node root;
@@ -1267,45 +1252,6 @@ void tst_Gdt::removeUncommittedNode()
     COMPARE_REGION(tracker.commit(), QRegion());
 }
 
-void tst_Gdt::siblingOrderPaint()
-{
-    Node root;
-    auto *first = new GeometryNode;
-    first->setBoundingRect(QRectF(0, 0, 10, 10));
-    first->setFullyOpaque(true);
-    auto *second = new GeometryNode;
-    second->setBoundingRect(QRectF(0, 0, 10, 10));
-    second->setFullyOpaque(true);
-    root.prependChild(second);
-    root.prependChild(first);
-    QCOMPARE(root.firstChild(), first);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-}
-
-void tst_Gdt::backdropDoesNotSeeFrontDamageAsRequired()
-{
-    Node root;
-    auto *behind = new GeometryNode;
-    behind->setBoundingRect(QRectF(0, 0, 80, 80));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(0, 0, 80, 80));
-    bg->setExpansion(6);
-    auto *front = new GeometryNode;
-    front->setBoundingRect(QRectF(0, 0, 80, 80));
-    root.appendChild(behind);
-    root.appendChild(bg);
-    root.appendChild(front);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    behind->markContentDirty(QRect(20, 20, 2, 2));
-    tracker.commit();
-    COMPARE_REGION(bg->effectInputDamage(), QRegion(20, 20, 2, 2));
-    COMPARE_REGION(NodeTestAccess::inducedDamage(bg), QRegion(14, 14, 14, 14));
-}
 
 void tst_Gdt::twoViewportsIndependentDamage()
 {
@@ -1322,15 +1268,15 @@ void tst_Gdt::twoViewportsIndependentDamage()
         {QRect(0, 0, 50, 50)},
         {QRect(100, 0, 50, 50)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(0, 0, 40, 40));
-    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(100, 0, 40, 40));
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion(0, 0, 40, 40));
+    COMPARE_REGION(vps[1].outputDamageRegion(), QRegion(100, 0, 40, 40));
     tracker.finishFrame();
 
     left->markContentDirty(QRect(1, 1, 2, 2));
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(1, 1, 2, 2));
-    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion());
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion(1, 1, 2, 2));
+    COMPARE_REGION(vps[1].outputDamageRegion(), QRegion());
     tracker.finishFrame();
 }
 
@@ -1351,7 +1297,7 @@ void tst_Gdt::twoViewportsIndependentOcclusion()
         {QRect(0, 0, 80, 80)},
         {QRect(80, 0, 80, 80)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
     tracker.finishFrame();
     COMPARE_REGION(front->worldVisibleRegion(), QRegion(0, 0, 80, 80));
     COMPARE_REGION(back->worldVisibleRegion(), QRegion(80, 0, 120, 80));
@@ -1369,9 +1315,9 @@ void tst_Gdt::twoViewportsSingleCommitKeepsBoth()
         {QRect(0, 0, 80, 40)},
         {QRect(80, 0, 80, 40)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion(50, 0, 30, 20));
-    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion(80, 0, 30, 20));
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion(50, 0, 30, 20));
+    COMPARE_REGION(vps[1].outputDamageRegion(), QRegion(80, 0, 30, 20));
     tracker.finishFrame();
 }
 
@@ -1387,11 +1333,11 @@ void tst_Gdt::twoViewportsIdempotent()
         {QRect(0, 0, 50, 50)},
         {QRect(50, 0, 50, 50)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
     tracker.finishFrame();
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
-    COMPARE_REGION(vps[0].accumulatedDamage(), QRegion());
-    COMPARE_REGION(vps[1].accumulatedDamage(), QRegion());
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
+    COMPARE_REGION(vps[0].outputDamageRegion(), QRegion());
+    COMPARE_REGION(vps[1].outputDamageRegion(), QRegion());
     tracker.finishFrame();
 }
 
@@ -1407,12 +1353,12 @@ void tst_Gdt::twoViewportsDropped()
         {QRect(0, 0, 20, 20)},
         {QRect(100, 100, 20, 20)},
     };
-    for (auto &vp : vps1) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps1) tracker.commit(vp);
+    for (auto &vp : vps1) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps1) commitViewports(tracker, vp);
     tracker.finishFrame();
     QVector<Tracker::Viewport> vps2{
         {QRect(0, 0, 20, 20)},
     };
-    for (auto &vp : vps2) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps2) tracker.commit(vp);
+    for (auto &vp : vps2) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps2) commitViewports(tracker, vp);
     QCOMPARE(vps2.size(), 1);
     tracker.finishFrame();
 }
@@ -1429,7 +1375,7 @@ void tst_Gdt::nodeAccessorsFollowPrimaryViewport()
         {QRect(0, 0, 20, 20)},
         {QRect(50, 50, 10, 10)},
     };
-    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) tracker.commit(vp);
+    for (auto &vp : vps) vp.finishFrame(); tracker.prepareFrame(); for (auto &vp : vps) commitViewports(tracker, vp);
     tracker.finishFrame();
     COMPARE_REGION(g->worldVisibleRegion(), QRegion(0, 0, 10, 10));
     QCOMPARE(g->worldBounds(), QRect(0, 0, 10, 10));
@@ -1441,7 +1387,6 @@ void tst_Gdt::nodeHasContentProperty()
     auto *container = new GeometryNode;
     container->setBoundingRect(QRectF(0, 0, 300, 300));
     container->setHasContent(false); // Acts as a structural container without drawing own pixels
-    QVERIFY(!container->hasContent());
 
     auto *child = new GeometryNode;
     child->setBoundingRect(QRectF(50, 50, 100, 100));
@@ -1476,7 +1421,8 @@ void tst_Gdt::worldVisiblePartialOpaqueRegion()
     back->setBoundingRect(QRectF(0, 0, 40, 40));
     auto *front = new GeometryNode;
     front->setBoundingRect(QRectF(0, 0, 40, 40));
-    front->setOpaqueRegion(QRegion(0, 0, 10, 40));
+    const Region opaqueStrip(0, 0, 10, 40);
+    front->setOpaqueRegion(opaqueStrip.native());
     root.appendChild(back);
     root.appendChild(front);
 
@@ -1637,7 +1583,7 @@ void tst_Gdt::worldVisibleDemoDualOutput()
     for (auto &vp : vps) vp.finishFrame();
     tracker.prepareFrame();
     for (auto &vp : vps)
-        tracker.commit(vp);
+        commitViewports(tracker, vp);
     tracker.finishFrame();
 
     COMPARE_REGION(front->worldVisibleRegion(), QRegion(80, 80, 260, 200));
@@ -1671,7 +1617,7 @@ void tst_Gdt::worldVisibleViewportMatrixIgnored()
     for (auto &vp : vps) vp.finishFrame();
     tracker.prepareFrame();
     for (auto &vp : vps)
-        tracker.commit(vp);
+        commitViewports(tracker, vp);
     tracker.finishFrame();
     COMPARE_REGION(g->worldVisibleRegion(), QRegion(10, 5, 4, 3));
 }
@@ -1763,8 +1709,8 @@ void tst_Gdt::worldVisibleIdempotentSecondCommit()
 
     TestTracker tracker(&root);
     tracker.commit();
-    const QRegion firstFront = front->worldVisibleRegion();
-    const QRegion firstBack = back->worldVisibleRegion();
+    const QRegion firstFront = toQRegion(front->worldVisibleRegion());
+    const QRegion firstBack = toQRegion(back->worldVisibleRegion());
     tracker.commit();
     COMPARE_REGION(front->worldVisibleRegion(), firstFront);
     COMPARE_REGION(back->worldVisibleRegion(), firstBack);
@@ -1891,113 +1837,10 @@ void tst_Gdt::worldVisibleNegativeCoords()
     COMPARE_REGION(g->worldVisibleRegion(), QRegion(-30, -10, 20, 20));
 }
 
-void tst_Gdt::backdropSeparatesInputFromDirectVisibility()
-{
-    Node root;
-    auto *dirty = new GeometryNode;
-    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
-    dirty->setFullyOpaque(true);
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(100, 100, 140, 140));
-    bg->setExpansion(16);
-    auto *cover = new GeometryNode;
-    cover->setBoundingRect(QRectF(40, 40, 160, 160));
-    cover->setFullyOpaque(true);
-    root.appendChild(dirty);
-    root.appendChild(bg);
-    root.appendChild(cover);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-
-    const QRegion coverRegion(40, 40, 160, 160);
-    const QRegion backdropBounds(100, 100, 140, 140);
-    const QRegion firstInput(120, 120, 80, 80);
-    const QRegion firstOutput(104, 104, 112, 112);
-    const QRegion effectVisible = backdropBounds - coverRegion;
-    const QRegion firstPresent = coverRegion + effectVisible;
-
-    COMPARE_REGION(cover->worldFrontOpaqueRegion(), QRegion());
-    COMPARE_REGION(dirty->worldVisibleRegion(), QRegion());
-    COMPARE_REGION(bg->effectInputDamage(), firstInput);
-    COMPARE_REGION(bg->inducedDamage(), firstOutput);
-    COMPARE_REGION(bg->effectOutputBounds(), backdropBounds);
-    COMPARE_REGION(bg->effectOutputVisibleRegion(), effectVisible);
-    COMPARE_REGION(tracker.rawWorldDamage(), coverRegion + backdropBounds);
-    COMPARE_REGION(tracker.presentWorldDamage(), firstPresent);
-
-    dirty->markContentDirty(QRect(60, 60, 20, 20));
-    tracker.commit();
-
-    const QRegion dirtyWorld(180, 180, 20, 20);
-    const QRegion expectedOutput(164, 164, 52, 52);
-    const QRegion expectedPresent = expectedOutput - coverRegion;
-
-    COMPARE_REGION(tracker.rawWorldDamage(), expectedOutput);
-    COMPARE_REGION(bg->effectInputDamage(), dirtyWorld);
-    COMPARE_REGION(bg->inducedDamage(), expectedOutput);
-    COMPARE_REGION(bg->effectOutputBounds(), backdropBounds);
-    COMPARE_REGION(bg->effectOutputVisibleRegion(), effectVisible);
-    COMPARE_REGION(dirty->worldVisibleRegion(), QRegion());
-    COMPARE_REGION(tracker.presentWorldDamage(), expectedPresent);
-}
-void tst_Gdt::opaqueCoverHidesWithoutBackdrop()
-{
-    Node root;
-    auto *dirty = new GeometryNode;
-    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
-    dirty->setFullyOpaque(true);
-    auto *cover = new GeometryNode;
-    cover->setBoundingRect(QRectF(40, 40, 160, 160));
-    cover->setFullyOpaque(true);
-    root.appendChild(dirty);
-    root.appendChild(cover);
-
-    TestTracker tracker(&root);
-    tracker.commit();
-    COMPARE_REGION(dirty->worldVisibleRegion(), QRegion());
-    COMPARE_REGION(dirty->worldFrontOpaqueRegion(), QRegion(40, 40, 160, 160));
-}
 
 
-void tst_Gdt::backdropProcessorViewportTransform()
-{
-    Node root;
-    auto *dirty = new GeometryNode;
-    dirty->setBoundingRect(QRectF(120, 120, 80, 80));
-    auto *bg = new BackdropNode;
-    bg->setBoundingRect(QRectF(100, 100, 140, 140));
-    bg->setExpansion(16);
-    bg->setClip(false);
-    auto *cover = new GeometryNode;
-    cover->setBoundingRect(QRectF(40, 40, 160, 160));
-    cover->setFullyOpaque(true);
-    root.appendChild(dirty);
-    root.appendChild(bg);
-    root.appendChild(cover);
 
-    Tracker tracker(&root);
-    Tracker::Viewport vp{QRect(0, 0, 800, 800), QTransform::fromScale(2, 2)};
-    vp.finishFrame();
-    tracker.prepareFrame();
-    tracker.commit(vp);
-    tracker.finishFrame();
 
-    dirty->markContentDirty(QRect(60, 60, 20, 20));
-    vp.finishFrame();
-    tracker.prepareFrame();
-    tracker.commit(vp);
-    const QRegion input(180, 180, 20, 20);
-    const QRegion output(164, 164, 52, 52);
-    const QRegion visibleOutput = output - QRegion(40, 40, 160, 160);
-    COMPARE_REGION(dirty->worldVisibleRegion(), QRegion());
-    COMPARE_REGION(bg->effectInputDamage(), input);
-    COMPARE_REGION(bg->inducedDamage(), output);
-    COMPARE_REGION(tracker.presentWorldDamage(), visibleOutput);
-    COMPARE_REGION(vp.accumulatedDamage(),
-                   mapRegionOuter(QTransform::fromScale(2, 2), visibleOutput));
-    tracker.finishFrame();
-}
 
 void tst_Gdt::worldVisibleRotate90()
 {
@@ -2019,6 +1862,85 @@ void tst_Gdt::worldVisibleRotate90()
     QVERIFY(isAxisAligned(g->worldTransform()));
     COMPARE_REGION(g->worldOpaqueRegion(), QRegion(g->worldBounds()));
     COMPARE_REGION(g->worldVisibleRegion(), QRegion(g->worldBounds()));
+}
+
+void tst_Gdt::backdropKeepsCoveredBehindDamage()
+{
+    Node root;
+    auto *back = new GeometryNode;
+    back->setBoundingRect(QRectF(20, 20, 40, 40));
+    back->setFullyOpaque(true);
+    auto *backdrop = new GeometryNode;
+    backdrop->setBoundingRect(QRectF(10, 10, 60, 60));
+    backdrop->setNeedsBackdrop(true);
+    auto *cover = new GeometryNode;
+    cover->setBoundingRect(QRectF(0, 0, 80, 80));
+    cover->setFullyOpaque(true);
+    root.appendChild(back);
+    root.appendChild(backdrop);
+    root.appendChild(cover);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+
+    back->markContentDirty(QRect(8, 8, 10, 10));
+    COMPARE_REGION(tracker.commit(), QRegion(28, 28, 10, 10));
+    COMPARE_REGION(tracker.backdropDamageRegion(), QRegion(28, 28, 10, 10));
+}
+
+void tst_Gdt::backdropPunchesFrontOpaque()
+{
+    Node root;
+    auto *back = new GeometryNode;
+    back->setBoundingRect(QRectF(20, 20, 40, 40));
+    back->setFullyOpaque(true);
+    auto *backdrop = new GeometryNode;
+    backdrop->setBoundingRect(QRectF(10, 10, 60, 60));
+    backdrop->setNeedsBackdrop(true);
+    auto *cover = new GeometryNode;
+    cover->setBoundingRect(QRectF(0, 0, 80, 80));
+    cover->setFullyOpaque(true);
+    root.appendChild(back);
+    root.appendChild(backdrop);
+    root.appendChild(cover);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+
+    COMPARE_REGION(back->worldVisibleRegion(), QRegion(20, 20, 40, 40));
+    COMPARE_REGION(cover->worldVisibleRegion(), QRegion(0, 0, 80, 80));
+
+    auto *outside = new GeometryNode;
+    outside->setBoundingRect(QRectF(90, 0, 10, 10));
+    outside->setFullyOpaque(true);
+    root.prependChild(outside);
+    auto *outsideCover = new GeometryNode;
+    outsideCover->setBoundingRect(QRectF(90, 0, 10, 10));
+    outsideCover->setFullyOpaque(true);
+    root.appendChild(outsideCover);
+    tracker.commit();
+    COMPARE_REGION(outside->worldVisibleRegion(), QRegion());
+}
+
+void tst_Gdt::backdropBehindDamageMatchesAccumulator()
+{
+    Node root;
+    auto *back = new GeometryNode;
+    back->setBoundingRect(QRectF(0, 0, 50, 50));
+    auto *backdrop = new GeometryNode;
+    backdrop->setBoundingRect(QRectF(10, 10, 40, 40));
+    backdrop->setNeedsBackdrop(true);
+    root.appendChild(back);
+    root.appendChild(backdrop);
+
+    TestTracker tracker(&root);
+    tracker.commit();
+    back->markContentDirty(QRect(5, 5, 8, 8));
+    tracker.commit();
+
+    COMPARE_REGION(backdrop->behindDamageRegion(), QRegion(5, 5, 8, 8));
+    COMPARE_REGION(Region(backdrop->behindDamageRegion()) & backdrop->worldBounds(),
+                   QRegion(10, 10, 3, 3));
 }
 
 QTEST_MAIN(tst_Gdt)

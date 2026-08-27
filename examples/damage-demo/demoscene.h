@@ -108,8 +108,6 @@ public:
     Q_INVOKABLE void setRotationSelected(qreal degrees, int axis = 2);
     Q_INVOKABLE void setScaleSelected(qreal sx, qreal sy);
     Q_INVOKABLE void setFullyOpaqueSelected(bool opaque);
-    Q_INVOKABLE void setExpansionSelected(int px);
-    Q_INVOKABLE void setClipSelected(bool clip);
     Q_INVOKABLE void markSelectedContentDirty();
     Q_INVOKABLE void markSelectedContentDirtyAt(qreal x, qreal y, qreal w, qreal h);
     Q_INVOKABLE void moveSelectedBy(qreal dx, qreal dy);
@@ -165,7 +163,7 @@ private:
     QVariantList m_presentRects;
     QVariantList m_presentRectsB;
     QVariantList m_presentFrames;
-    QRegion m_injectedBufferDamageA;
+    Gdt::Region m_injectedBufferDamageA;
     struct ViewportConfig {
         int id = 0;
         QString name;
@@ -199,7 +197,7 @@ private:
     qreal m_rotation = 0;
     qreal m_scaleX = 1;
     qreal m_scaleY = 1;
-    QRegion m_injectedBufferDamageB;
+    Gdt::Region m_injectedBufferDamageB;
     QTimer m_dragFrameTimer;
     QTimer m_demoTimer;
 };

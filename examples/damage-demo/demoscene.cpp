@@ -25,9 +25,6 @@ static QString typeString(Node::Type t)
         return QStringLiteral("Transform");
     case Node::Type::Geometry:
         return QStringLiteral("Geometry");
-    case Node::Type::Custom:
-        return QStringLiteral("Backdrop");
-
     }
     return {};
 }
@@ -37,18 +34,28 @@ static int refreshInterval(int refreshRate)
 {
     return qMax(1, int(std::round(1000.0 / refreshRate)));
 }
-static QVariantList regionToRects(const QRegion &region)
+static QVariantList regionToRects(const pixman_region32_t *region)
 {
     QVariantList list;
-    for (const QRect &r : region) {
-        QVariantMap m;
-        m.insert(QStringLiteral("x"), r.x());
-        m.insert(QStringLiteral("y"), r.y());
-        m.insert(QStringLiteral("w"), r.width());
-        m.insert(QStringLiteral("h"), r.height());
-        list.append(m);
+    if (!region)
+        return list;
+    int count = 0;
+    const pixman_box32_t *boxes = pixman_region32_rectangles(region, &count);
+    list.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        QVariantMap map;
+        map.insert(QStringLiteral("x"), boxes[i].x1);
+        map.insert(QStringLiteral("y"), boxes[i].y1);
+        map.insert(QStringLiteral("w"), boxes[i].x2 - boxes[i].x1);
+        map.insert(QStringLiteral("h"), boxes[i].y2 - boxes[i].y1);
+        list.append(map);
     }
     return list;
+}
+
+static QVariantList regionToRects(const Region &region)
+{
+    return regionToRects(region.native());
 }
 static QString formatRect(const QRect &r)
 {
@@ -56,14 +63,19 @@ static QString formatRect(const QRect &r)
         .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
 }
 
-static QString formatRegion(const QRegion &region)
+static QString formatRegion(const pixman_region32_t *region)
 {
-    if (region.isEmpty())
+    if (!region || !pixman_region32_not_empty(region))
         return QStringLiteral("空");
     QStringList parts;
-    parts.reserve(region.rectCount());
-    for (const QRect &r : region)
-        parts.append(formatRect(r));
+    int count = 0;
+    const pixman_box32_t *boxes = pixman_region32_rectangles(region, &count);
+    parts.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        parts.append(formatRect(QRect(boxes[i].x1, boxes[i].y1,
+                                      boxes[i].x2 - boxes[i].x1,
+                                      boxes[i].y2 - boxes[i].y1)));
+    }
     return parts.join(QStringLiteral(" ∪ "));
 }
 
@@ -75,92 +87,61 @@ enum class DemoPassType {
 
 struct DemoRenderPass {
     DemoPassType type;
-    const CustomNode *effect = nullptr;
-    QRegion damage;
+    const Node *effect = nullptr;
+    Region damage;
 };
 
 struct DemoRenderResult {
     QVector<DemoRenderPass> passes;
-    QRegion renderDamage;
-    QRegion flushDamage;
-    QRegion presentDamage;
+    Region renderDamage;
+    Region flushDamage;
+    Region presentDamage;
 };
 
 class DemoRenderer
 {
 public:
-    static DemoRenderResult render(const Node *root, const QTransform &worldToOutput,
-                                   const QRect &outputRect, const QRegion &rawWorldDamage,
-                                   const QRegion &presentDamage,
-                                   const QRegion &bufferDamage)
+    static void accumulate(const Node *n, Region &current,
+                           const QTransform &worldToOutput,
+                           DemoRenderResult *result)
     {
-        DemoRenderResult result;
-        result.presentDamage = presentDamage;
-        if (!outputRect.isEmpty())
-            result.presentDamage &= outputRect;
-
-        if (!rawWorldDamage.isEmpty())
-            collectEffectPasses(root, worldToOutput, outputRect, result);
-
-        QRegion mainDamage = result.presentDamage + bufferDamage;
-        if (!outputRect.isEmpty())
-            mainDamage &= outputRect;
-        if (!mainDamage.isEmpty()) {
-            result.passes.append({DemoPassType::Main, nullptr, mainDamage});
-            result.renderDamage += mainDamage;
+        if (!n)
+            return;
+        if (!n->isVisible()) {
+            current += Region(n->ownDamage());
+            return;
         }
-
-        // This simulator uses exact scissor regions for every pass.
-        result.flushDamage = result.renderDamage;
-        return result;
-    }
-
-private:
-    static QRegion mapToOutput(const QRegion &worldRegion,
-                               const QTransform &worldToOutput,
-                               const QRect &outputRect)
-    {
-        if (worldRegion.isEmpty())
-            return {};
-        QRegion output;
-        if (worldToOutput.isAffine() && worldToOutput.isInvertible())
-            output = mapRegionOuter(worldToOutput, worldRegion);
-        else if (!outputRect.isEmpty())
-            output = QRegion(outputRect);
-        if (!outputRect.isEmpty())
-            output &= outputRect;
-        return output;
-    }
-
-    static void appendPass(DemoRenderResult &result, DemoPassType type,
-                           const CustomNode *effect, const QRegion &damage)
-    {
-        if (damage.isEmpty())
-            return;
-        result.passes.append({type, effect, damage});
-        result.renderDamage += damage;
-    }
-
-    static void collectEffectPasses(const Node *node, const QTransform &worldToOutput,
-                                    const QRect &outputRect, DemoRenderResult &result)
-    {
-        if (!node || !node->isVisible())
-            return;
-
-        if (const CustomNode *effect = node->toCustom()) {
-            const QRegion visibleOutput =
-                effect->inducedDamage() & effect->effectOutputVisibleRegion();
-            if (!visibleOutput.isEmpty()) {
-                appendPass(result, DemoPassType::EffectInput, effect,
-                           mapToOutput(effect->effectInputDamage(),
-                                       worldToOutput, outputRect));
-                appendPass(result, DemoPassType::EffectOutput, effect,
-                           mapToOutput(visibleOutput, worldToOutput, outputRect));
+        if (n->needsBackdrop() && n->hasContent()) {
+            Region source = Region(n->worldBounds()) & current;
+            if (!source.isEmpty()) {
+                result->passes.append({DemoPassType::EffectInput, n,
+                                       mapRegionOuter(worldToOutput, source)});
             }
         }
+        if (n->hasContent() && pixman_region32_not_empty(n->worldOpaqueRegion()))
+            current -= Region(n->worldOpaqueRegion());
+        current += Region(n->ownDamage());
+        for (const Node *child = n->firstChild(); child; child = child->nextSibling())
+            accumulate(child, current, worldToOutput, result);
+    }
 
-        for (const Node *child = node->firstChild(); child; child = child->nextSibling())
-            collectEffectPasses(child, worldToOutput, outputRect, result);
+    static DemoRenderResult render(const Node *root,
+                                   const Tracker::Viewport &viewport,
+                                   const Region &bufferDamage)
+    {
+        DemoRenderResult result;
+        result.presentDamage = Region(viewport.outputDamageRegion());
+        Region current;
+        accumulate(root, current, viewport.worldToOutput(), &result);
+        result.renderDamage = result.presentDamage + bufferDamage;
+        if (!viewport.outputRect().isEmpty())
+            result.renderDamage &= viewport.outputRect();
+        result.flushDamage = result.renderDamage;
+        if (!result.renderDamage.isEmpty()) {
+            result.passes.append({DemoPassType::Main, nullptr,
+                                  result.renderDamage});
+        }
+        return result;
     }
 };
 
@@ -564,10 +545,10 @@ void DemoScene::addGeometry()
 
 void DemoScene::addBackdrop()
 {
-    auto *n = new BackdropNode;
+    auto *n = new GeometryNode;
     n->setName(QStringLiteral("背景采样"));
     n->setBoundingRect(QRectF(40, 40, 280, 200));
-    n->setExpansion(12);
+    n->setNeedsBackdrop(true);
     parentForInsert()->appendChild(n);
     m_decor.insert(n->id(), Decor{QColor("#00bcd4")});
     setSelectedId(n->id());
@@ -692,23 +673,7 @@ void DemoScene::setFullyOpaqueSelected(bool opaque)
     maybeCommit();
 }
 
-void DemoScene::setExpansionSelected(int px)
-{
-    Node *n = findNode(m_selectedId);
-    if (!n || n->type() != Node::Type::Custom)
-        return;
-    static_cast<BackdropNode *>(n)->setExpansion(px);
-    maybeCommit();
-}
 
-void DemoScene::setClipSelected(bool clip)
-{
-    Node *n = findNode(m_selectedId);
-    if (!n || n->type() != Node::Type::Custom)
-        return;
-    static_cast<BackdropNode *>(n)->setClip(clip);
-    maybeCommit();
-}
 
 void DemoScene::markSelectedContentDirty()
 {
@@ -793,9 +758,9 @@ void DemoScene::clearTree()
 void DemoScene::injectSwapchainDamage(int viewportIndex, int x, int y, int w, int h)
 {
     if (viewportIndex == 0) {
-        m_injectedBufferDamageA += QRegion(m_vpA.outputRect.x() + x, m_vpA.outputRect.y() + y, w, h);
+        m_injectedBufferDamageA += Region(m_vpA.outputRect.x() + x, m_vpA.outputRect.y() + y, w, h);
     } else {
-        m_injectedBufferDamageB += QRegion(m_vpB.outputRect.x() + x, m_vpB.outputRect.y() + y, w, h);
+        m_injectedBufferDamageB += Region(m_vpB.outputRect.x() + x, m_vpB.outputRect.y() + y, w, h);
     }
     commit();
 }
@@ -827,11 +792,10 @@ void DemoScene::loadPreset(const QString &name)
         wall->setFullyOpaque(true);
         m_decor.insert(wall->id(), Decor{QColor("#0284c7")});
 
-        auto *bg = new BackdropNode;
+        auto *bg = new GeometryNode;
         bg->setName(QStringLiteral("模糊层"));
         bg->setBoundingRect(QRectF(140, 100, 280, 200));
-        bg->setExpansion(16);
-        m_decor.insert(bg->id(), Decor{QColor("#00bcd4")});
+        bg->setNeedsBackdrop(true);
 
         auto *chip = new GeometryNode;
         chip->setName(QStringLiteral("前景卡片"));
@@ -898,11 +862,10 @@ void DemoScene::buildDemoScene(const QString &name)
         wall->setFullyOpaque(true);
         m_decor.insert(wall->id(), Decor{QColor("#0284c7")});
 
-        auto *backdrop = new BackdropNode;
+        auto *backdrop = new GeometryNode;
         backdrop->setName(QStringLiteral("背景采样"));
         backdrop->setBoundingRect(QRectF(150, 100, 280, 200));
-        backdrop->setExpansion(18);
-        m_decor.insert(backdrop->id(), Decor{QColor("#00bcd4")});
+        backdrop->setNeedsBackdrop(true);
 
         auto *chip = new GeometryNode;
         chip->setName(QStringLiteral("前景内容"));
@@ -926,11 +889,10 @@ void DemoScene::buildDemoScene(const QString &name)
         dirty->setFullyOpaque(true);
         m_decor.insert(dirty->id(), Decor{QColor("#5b8def")});
 
-        auto *backdrop = new BackdropNode;
+        auto *backdrop = new GeometryNode;
         backdrop->setName(QStringLiteral("背景采样"));
         backdrop->setBoundingRect(QRectF(100, 100, 140, 140));
-        backdrop->setExpansion(16);
-        m_decor.insert(backdrop->id(), Decor{QColor("#00bcd4")});
+        backdrop->setNeedsBackdrop(true);
 
         auto *cover = new GeometryNode;
         cover->setName(QStringLiteral("顶层不透明"));
@@ -1119,8 +1081,8 @@ void DemoScene::updateDamage(bool rebuildScene)
     if (m_vpB.rotation != 0.0)
         t1.rotate(m_vpB.rotation, Qt::ZAxis);
     vp1.setWorldToOutput(t1);
-    QRegion bufferDamageA = m_injectedBufferDamageA;
-    QRegion bufferDamageB = m_injectedBufferDamageB;
+    Region bufferDamageA = m_injectedBufferDamageA;
+    Region bufferDamageB = m_injectedBufferDamageB;
     if (m_vpA.swapchainEnabled)
         bufferDamageA += m_vpA.swapchainDamageRect.translated(m_vpA.outputRect.topLeft());
     if (m_vpB.swapchainEnabled)
@@ -1130,16 +1092,9 @@ void DemoScene::updateDamage(bool rebuildScene)
     for (auto &vp : vps)
         vp.finishFrame();
     m_tracker.prepareFrame();
-    for (auto &vp : vps)
-        m_tracker.commit(vp);
-    const QRegion presentA = vps[0].accumulatedDamage();
-    const QRegion presentB = vps[1].accumulatedDamage();
-    const DemoRenderResult renderA = DemoRenderer::render(
-        m_root.get(), t0, m_vpA.outputRect, m_tracker.rawWorldDamage(),
-        presentA, bufferDamageA);
-    const DemoRenderResult renderB = DemoRenderer::render(
-        m_root.get(), t1, m_vpB.outputRect, m_tracker.rawWorldDamage(),
-        presentB, bufferDamageB);
+    m_tracker.commit(vps);
+    const DemoRenderResult renderA = DemoRenderer::render(m_root.get(), vps[0], bufferDamageA);
+    const DemoRenderResult renderB = DemoRenderer::render(m_root.get(), vps[1], bufferDamageB);
     m_injectedBufferDamageA = {};
     m_injectedBufferDamageB = {};
     m_tracker.finishFrame();
@@ -1152,7 +1107,7 @@ void DemoScene::updateDamage(bool rebuildScene)
     m_presentRectsB = regionToRects(renderB.presentDamage);
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const QRegion combinedRender = renderA.flushDamage + renderB.flushDamage;
+    const Region combinedRender = renderA.flushDamage + renderB.flushDamage;
     if (!combinedRender.isEmpty()) {
         QVariantMap frame;
         frame.insert(QStringLiteral("timestamp"), now);
@@ -1162,7 +1117,7 @@ void DemoScene::updateDamage(bool rebuildScene)
         while (m_renderFrames.size() > maximumFrames)
             m_renderFrames.removeFirst();
     }
-    const QRegion combinedPresent = renderA.presentDamage + renderB.presentDamage;
+    const Region combinedPresent = renderA.presentDamage + renderB.presentDamage;
     if (!combinedPresent.isEmpty()) {
         QVariantMap frame;
         frame.insert(QStringLiteral("timestamp"), now);
@@ -1243,13 +1198,15 @@ void DemoScene::collectVisualOnly(Node *n, QVector<QVariantMap> *visual, int *pa
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
-        v.insert(QStringLiteral("worldVisibleRegionEmpty"), n->worldVisibleRegion().isEmpty());
+        v.insert(QStringLiteral("worldVisibleRegionEmpty"),
+                 !pixman_region32_not_empty(n->worldVisibleRegion()));
         v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
-        v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
+        v.insert(QStringLiteral("opaqueRegionEmpty"),
+                 !pixman_region32_not_empty(n->worldOpaqueRegion()));
         const QColor c = m_decor.value(n->id()).color;
         v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
+        v.insert(QStringLiteral("isBackdrop"), n->name().contains(QStringLiteral("背景")) || n->name().contains(QStringLiteral("模糊")));
         v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
     }
@@ -1264,14 +1221,6 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
     QString label;
     if (!n->parent()) {
         label = QStringLiteral("根节点 #%1").arg(n->id());
-    } else if (n->type() == Node::Type::Custom) {
-        auto *bg = static_cast<BackdropNode *>(n);
-        const QRectF r = bg->boundingRect();
-        label = QStringLiteral("背景采样 #%1 [%2x%3 扩:%4px]")
-                    .arg(n->id())
-                    .arg(qRound(r.width()))
-                    .arg(qRound(r.height()))
-                    .arg(bg->expansion().left());
     } else if (auto *geometry = n->toGeometry()) {
         const QRectF r = geometry->boundingRect();
         const QString typeDesc = geometry->isFullyOpaque() ? QStringLiteral("不透明几何")
@@ -1331,13 +1280,15 @@ void DemoScene::collectVisual(Node *n, QVector<QVariantMap> *visual, QVariantLis
         v.insert(QStringLiteral("w"), aabb.width());
         v.insert(QStringLiteral("h"), aabb.height());
         v.insert(QStringLiteral("visible"), n->isVisible());
-        v.insert(QStringLiteral("worldVisibleRegionEmpty"), n->worldVisibleRegion().isEmpty());
+        v.insert(QStringLiteral("worldVisibleRegionEmpty"),
+                 !pixman_region32_not_empty(n->worldVisibleRegion()));
         v.insert(QStringLiteral("subtreeW"), n->subtreeBounds().width());
         v.insert(QStringLiteral("subtreeH"), n->subtreeBounds().height());
-        v.insert(QStringLiteral("opaqueRegionEmpty"), n->worldOpaqueRegion().isEmpty());
+        v.insert(QStringLiteral("opaqueRegionEmpty"),
+                 !pixman_region32_not_empty(n->worldOpaqueRegion()));
         const QColor c = m_decor.value(n->id()).color;
         v.insert(QStringLiteral("color"), (c.isValid() ? c : QColor("#888888")).name());
-        v.insert(QStringLiteral("isBackdrop"), n->type() == Node::Type::Custom);
+        v.insert(QStringLiteral("isBackdrop"), n->name().contains(QStringLiteral("背景")) || n->name().contains(QStringLiteral("模糊")));
         v.insert(QStringLiteral("fullyOpaque"), geo->isFullyOpaque());
         visual->append(v);
     }
@@ -1363,20 +1314,15 @@ void DemoScene::refreshSelectedProps()
     p.insert(QStringLiteral("hasContent"), n->hasContent());
     p.insert(QStringLiteral("worldVisibleRegion"), formatRegion(n->worldVisibleRegion()));
     p.insert(QStringLiteral("worldFrontOpaque"), formatRegion(n->worldFrontOpaqueRegion()));
-    p.insert(QStringLiteral("effectInputDamage"), formatRegion(n->effectInputDamage()));
-    p.insert(QStringLiteral("effectOutputBounds"), formatRegion(n->effectOutputBounds()));
-    p.insert(QStringLiteral("effectOutputVisible"),
-             formatRegion(n->effectOutputVisibleRegion()));
     p.insert(QStringLiteral("worldOpaqueRegion"), formatRegion(n->worldOpaqueRegion()));
     p.insert(QStringLiteral("worldBounds"), formatRect(n->worldBounds()));
     p.insert(QStringLiteral("subtreeBounds"), formatRect(n->subtreeBounds()));
     p.insert(QStringLiteral("ownDamage"), formatRegion(n->ownDamage()));
-    p.insert(QStringLiteral("inducedDamage"), formatRegion(n->inducedDamage()));
     p.insert(QStringLiteral("dirty"), n->isDirty());
     p.insert(QStringLiteral("isRoot"), n == m_root.get());
     p.insert(QStringLiteral("isGeometry"), n->toGeometry() != nullptr);
     p.insert(QStringLiteral("isTransform"), n->toTransform() != nullptr);
-    p.insert(QStringLiteral("isBackdrop"), n->toCustom() != nullptr);
+    p.insert(QStringLiteral("isBackdrop"), n->needsBackdrop());
     p.insert(QStringLiteral("canDelete"), n != m_root.get());
     p.insert(QStringLiteral("canRaise"), n->parent() && n->nextSibling());
     p.insert(QStringLiteral("canLower"), n->parent() && n->previousSibling());
@@ -1406,11 +1352,6 @@ void DemoScene::refreshSelectedProps()
         p.insert(QStringLiteral("m33"), matrix.m33());
         p.insert(QStringLiteral("dx"), matrix.dx());
         p.insert(QStringLiteral("dy"), matrix.dy());
-    }
-    if (n->type() == Node::Type::Custom) {
-        auto *bg = static_cast<BackdropNode *>(n);
-        p.insert(QStringLiteral("expansion"), bg->expansion().left());
-        p.insert(QStringLiteral("clipExpansion"), bg->clip());
     }
     m_selectedProps = p;
     emit selectedPropsChanged();

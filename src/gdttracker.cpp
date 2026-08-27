@@ -1,10 +1,20 @@
 #include "gdttracker.h"
 
-#include <utility>
+#include <cmath>
 
 namespace Gdt {
 
-// --- Viewport ---
+static bool finiteAffine(const QTransform &transform)
+{
+    return transform.isAffine()
+        && transform.isInvertible()
+        && std::isfinite(transform.m11())
+        && std::isfinite(transform.m12())
+        && std::isfinite(transform.m21())
+        && std::isfinite(transform.m22())
+        && std::isfinite(transform.dx())
+        && std::isfinite(transform.dy());
+}
 
 void Viewport::setOutputRect(const QRect &rect)
 {
@@ -22,73 +32,29 @@ void Viewport::setWorldToOutput(const QTransform &transform)
     m_dirty = true;
 }
 
+void Viewport::addFlushRegion(const pixman_region32_t *damage)
+{
+    m_flush += Region(damage);
+    if (!m_outputRect.isEmpty())
+        m_flush &= m_outputRect;
+}
+
+void Viewport::addFlushRegion(const QRect &damage)
+{
+    m_flush += damage;
+    if (!m_outputRect.isEmpty())
+        m_flush &= m_outputRect;
+}
+
 void Viewport::finishFrame()
 {
     m_committedOutputRect = m_outputRect;
     m_committedWorldToOutput = m_worldToOutput;
     m_dirty = false;
-    m_accumulatedDamage = {};
-}
-
-// --- Tracker ---
-
-void Tracker::computeViewport(Viewport &vp, const QRegion &presentWorldDamage)
-{
-    const QTransform &w2o = vp.worldToOutput();
-    const QRect &outRect = vp.outputRect();
-
-    QRegion outputDamage;
-    if (Q_LIKELY(w2o.isAffine() && w2o.isInvertible())) {
-        outputDamage = mapRegionOuter(w2o, presentWorldDamage);
-    } else if (!outRect.isEmpty() && !presentWorldDamage.isEmpty()) {
-        outputDamage = QRegion(outRect);
-    } else {
-        outputDamage = mapRegionOuter(w2o, presentWorldDamage);
-    }
-
-    if (!outRect.isEmpty())
-        outputDamage &= outRect;
-    vp.m_accumulatedDamage += outputDamage;
-}
-
-void Tracker::prepareFrame()
-{
-    Q_ASSERT(m_phase == Phase::Idle);
-    m_phase = Phase::Prepared;
-    m_rawWorldDamage = {};
-    m_presentWorldDamage = {};
-    if (Q_UNLIKELY(!m_root))
-        return;
-    const bool treeDirty = m_root->isDirty();
-    if (Q_LIKELY(!treeDirty))
-        return;
-    m_root->updateWorld(QTransform(), false, m_rawWorldDamage);
-    QRegion worldFrontOpaque;
-    m_root->computeWorldVisibility(worldFrontOpaque, m_presentWorldDamage);
-}
-
-void Tracker::commit(Viewport &vp)
-{
-    Q_ASSERT(m_phase == Phase::Prepared || m_phase == Phase::Committed);
-    m_phase = Phase::Committed;
-    if (Q_UNLIKELY(!m_root))
-        return;
-
-    const bool treeDirty = m_root->isDirty();
-    if (Q_LIKELY(!treeDirty))
-        return;
-
-    computeViewport(vp, m_presentWorldDamage);
-}
-
-void Tracker::finishFrame()
-{
-    Q_ASSERT(m_phase == Phase::Committed);
-    m_phase = Phase::Idle;
-    if (Q_UNLIKELY(!m_root))
-        return;
-    if (m_root->isDirty())
-        m_root->commitState();
+    m_transformFallback = false;
+    m_worldDamage = {};
+    m_outputDamage = {};
+    m_flush = {};
 }
 
 Tracker::Tracker(Node *root)
@@ -101,6 +67,93 @@ Tracker::~Tracker() = default;
 void Tracker::setRoot(Node *root)
 {
     m_root = root;
+}
+
+void Tracker::prepareFrame()
+{
+    Q_ASSERT(m_phase == Phase::Idle);
+    m_phase = Phase::Prepared;
+    m_damage = {};
+    m_backdropDamage = {};
+    if (Q_UNLIKELY(!m_root))
+        return;
+    if (Q_LIKELY(!m_root->isDirty())) {
+        m_root->clearBehindDamageRecursive();
+        return;
+    }
+    m_root->updateWorld(QTransform(), false, m_damage, m_backdropDamage);
+    m_damage += m_backdropDamage;
+}
+
+void Tracker::mapViewport(Viewport &vp)
+{
+    const QRect treeBounds = m_root ? m_root->subtreeBounds() : QRect();
+    Region frameDamage(m_damage);
+    if (vp.m_dirty)
+        frameDamage += treeBounds;
+
+    const bool validTransform = finiteAffine(vp.m_worldToOutput);
+    vp.m_transformFallback = !validTransform;
+
+    if (validTransform) {
+        if (!vp.m_outputRect.isEmpty()) {
+            bool invertible = false;
+            const QTransform outputToWorld =
+                vp.m_worldToOutput.inverted(&invertible);
+            Q_ASSERT(invertible);
+            const Region worldViewport =
+                mapRegionOuter(outputToWorld, Region(vp.m_outputRect));
+            frameDamage &= worldViewport;
+        }
+        vp.m_worldDamage += frameDamage;
+        vp.m_outputDamage = mapRegionOuter(vp.m_worldToOutput, vp.m_worldDamage);
+        if (!vp.m_outputRect.isEmpty())
+            vp.m_outputDamage &= vp.m_outputRect;
+    } else {
+        const QRect fallback = vp.m_outputRect.isEmpty() ? treeBounds : vp.m_outputRect;
+        if (!frameDamage.isEmpty()) {
+            vp.m_worldDamage += treeBounds;
+            vp.m_outputDamage = Region(fallback);
+        }
+    }
+
+    vp.m_flush = vp.m_outputDamage;
+}
+
+void Tracker::commit(QVector<Viewport> &viewports)
+{
+    Q_ASSERT(m_phase == Phase::Prepared);
+    m_phase = Phase::Committed;
+    if (Q_UNLIKELY(!m_root))
+        return;
+
+    bool idle = !m_root->isDirty() && m_damage.isEmpty();
+    if (idle) {
+        for (const Viewport &viewport : viewports) {
+            if (viewport.m_dirty) {
+                idle = false;
+                break;
+            }
+        }
+    }
+    if (Q_LIKELY(idle))
+        return;
+
+    if (m_root->isDirty()) {
+        Region worldFrontOpaque;
+        m_root->computeWorldVisibility(worldFrontOpaque);
+    }
+
+    for (Viewport &viewport : viewports)
+        mapViewport(viewport);
+}
+
+void Tracker::finishFrame()
+{
+    Q_ASSERT(m_phase == Phase::Committed);
+    m_phase = Phase::Idle;
+    if (m_root && m_root->isDirty())
+        m_root->commitState();
 }
 
 } // namespace Gdt

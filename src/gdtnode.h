@@ -7,7 +7,6 @@
 #include <QMatrix4x4>
 #include <QRect>
 #include <QRectF>
-#include <QRegion>
 #include <QString>
 #include <QTransform>
 
@@ -15,11 +14,9 @@ namespace Gdt {
 
 class Node;
 class Tracker;
-struct Viewport;
+class Viewport;
 class TransformNode;
 class GeometryNode;
-class CustomNode;
-class BackdropNode;
 
 // Scene-graph node used for GUI damage precomputation.
 //
@@ -32,10 +29,9 @@ class Node
 {
 public:
     enum class Type {
-        Basic = 0,     // grouping only
-        Transform,     // local 2D matrix applied to descendants
-        Geometry,      // visible content
-        Custom,        // visible; generic custom opaque/damage processors
+        Basic = 0,
+        Transform,
+        Geometry,
     };
     enum DirtyBit {
         DirtyMatrix      = 1 << 0,
@@ -61,10 +57,8 @@ public:
 
     TransformNode *toTransform();
     GeometryNode *toGeometry();
-    CustomNode *toCustom();
     const TransformNode *toTransform() const;
     const GeometryNode *toGeometry() const;
-    const CustomNode *toCustom() const;
 
     void setName(const QString &name) { m_name = name; }
     QString name() const { return m_name; }
@@ -72,6 +66,9 @@ public:
 
     bool isVisible() const { return m_visible; }
     void setVisible(bool visible);
+    void setNeedsBackdrop(bool needsBackdrop);
+    bool needsBackdrop() const { return m_needsBackdrop; }
+
 
     Node *parent() const { return m_parent; }
     Node *firstChild() const { return m_firstChild; }
@@ -92,31 +89,31 @@ public:
     QTransform worldTransform() const { return m_worldTransform; }
     QRect worldBounds() const { return m_worldBounds; }
     QRect subtreeBounds() const { return m_subtreeAABB; }
-    QRegion worldOpaqueRegion() const { return m_worldOpaque; }
-    QRegion worldVisibleRegion() const { return m_worldVisibleRegion; }
-    QRegion worldFrontOpaqueRegion() const { return m_worldFrontOpaque; }
-    QRegion ownDamage() const { return m_ownDamage; }
-    QRegion effectInputDamage() const { return m_effectInputDamage; }
-    QRegion inducedDamage() const { return m_inducedDamage; }
-    QRegion effectOutputBounds() const { return m_effectOutputBounds; }
-    QRegion effectOutputVisibleRegion() const { return m_effectOutputVisibleRegion; }
-    bool isDirty() const { return m_dirty != 0; }
+    const pixman_region32_t *worldOpaqueRegion() const { return m_worldOpaque.native(); }
+    const pixman_region32_t *worldVisibleRegion() const { return m_worldVisibleRegion.native(); }
+    const pixman_region32_t *committedWorldVisibleRegion() const { return m_committedWorldVisibleRegion.native(); }
+    const pixman_region32_t *worldFrontOpaqueRegion() const { return m_worldFrontOpaque.native(); }
+    const pixman_region32_t *ownDamage() const { return m_ownDamage.native(); }
+    const pixman_region32_t *behindDamageRegion() const { return m_behindDamage.native(); }
 
+    bool isDirty() const { return m_dirty != 0; }
     QString dumpTree() const;
 
 protected:
     void markDirty(DirtyBits bits);
     bool m_hasContent = false;
-private:
     friend class Tracker;
     friend class NodeTestAccess;
+    friend class GeometryNode;
     void attach(Node *child, Node *prev, Node *next);
     void unlink(Node *child);
     void adopt(Node *child);
     void updateWorld(const QTransform &parentWorld, bool parentWorldChanged,
-                     QRegion &worldDamage);
-    void computeWorldVisibility(QRegion &worldFrontOpaque, QRegion &presentDamage);
+                     Region &worldDamage, Region &backdropDamage);
+    void clearBehindDamageRecursive();
+    void computeWorldVisibility(Region &worldFrontOpaque);
     void resetWorldVisibleRecursive();
+    void collectCommittedVisible(Region &visible) const;
     void commitState();
     void dumpTreeRecursive(QString &out, int depth) const;
     Type m_type;
@@ -132,25 +129,22 @@ private:
     int m_subtreeNodeCount = 1;
 
     bool m_visible = true;
+    bool m_needsBackdrop = false;
+
     DirtyBits m_dirty = DirtyAdded;
 
     QTransform m_worldTransform;
     QRect m_worldBounds;
     QRect m_subtreeAABB;
-    QRegion m_worldOpaque;
-    QRegion m_ownDamage;
-    QRegion m_effectInputDamage;
-    QRegion m_inducedDamage;
-    QRegion m_structuralPresentDamage;
-    QRegion m_pendingRemovedDamage;
-    QRegion m_pendingRemovedPresentDamage;
-    QRegion m_worldVisibleRegion;
-    QRegion m_worldFrontOpaque;
-    QRegion m_effectOutputBounds;
-    QRegion m_effectOutputVisibleRegion;
-    QRegion m_committedWorldVisibleRegion;
-    QRegion m_committedEffectOutputVisibleRegion;
-    QRegion m_committedSubtreeVisibleRegion;
+    Region m_worldOpaque;
+    Region m_ownDamage;
+    Region m_behindDamage;
+    Region m_structuralPresentDamage;
+    Region m_pendingRemovedDamage;
+    Region m_pendingRemovedPresentDamage;
+    Region m_worldVisibleRegion;
+    Region m_worldFrontOpaque;
+    Region m_committedWorldVisibleRegion;
     QRect m_committedWorldBounds;
     QRect m_committedSubtreeAABB;
     bool m_committedVisible = false;
@@ -187,8 +181,8 @@ public:
     QRectF boundingRect() const { return m_boundingRect; }
 
     // Content-local opaque pixels. Origin is boundingRect top-left.
-    void setOpaqueRegion(const QRegion &localOpaque);
-    QRegion opaqueRegion() const { return m_opaqueRegion; }
+    void setOpaqueRegion(const pixman_region32_t *localOpaque);
+    const pixman_region32_t *opaqueRegion() const { return m_opaqueRegion.native(); }
 
     // Marks every pixel inside the (inner-aligned) content box as opaque.
     // Recomputed when the bounding rect changes.
@@ -197,7 +191,7 @@ public:
 
     // Content-local dirty pixels. Origin is boundingRect top-left.
     // Clipped to the content box on commit.
-    void markContentDirty(const QRegion &localRegion);
+    void markContentDirty(const pixman_region32_t *localRegion);
     void markContentDirty(const QRect &localRect);
 
 protected:
@@ -209,70 +203,11 @@ private:
     void syncFullyOpaqueRegion();
 
     QRectF m_boundingRect;
-    QRegion m_opaqueRegion;
-    QRegion m_pendingContentDamage;
+    Region m_opaqueRegion;
+    Region m_pendingContentDamage;
     bool m_fullyOpaque = false;
 };
 
-// Context passed to CustomNode's damage processor callback.
-struct RenderContext {
-    const Viewport *viewport = nullptr;
-    QRegion overallDamage;              // Damage accumulated before this node paints
-    QTransform worldTransform;          // Node's transform in world space
-    QRectF boundingRect;                // Node's local bounding rectangle
-    QRect worldBounds;                  // Node's world bounding rectangle
-    QRect outputBounds;                 // Node's output bounding rectangle in current viewport
-};
-
-struct EffectDamage {
-    QRegion input;
-    QRegion output;
-    QRegion outputBounds;
-};
-
-// Generic custom node: converts accumulated damage behind it into explicit
-// effect input and output damage. Render targets remain renderer-owned.
-class CustomNode : public GeometryNode
-{
-public:
-    CustomNode();
-protected:
-    explicit CustomNode(Type type);
-public:
-    using DamageProcessor = std::function<EffectDamage(const CustomNode *node,
-                                                       const QRegion &collectedDamage,
-                                                       const RenderContext &ctx)>;
-
-    void setDamageProcessor(DamageProcessor func);
-    DamageProcessor damageProcessor() const { return m_damageProcessor; }
-
-private:
-    friend class Node;
-    friend class Tracker;
-    DamageProcessor m_damageProcessor;
-};
-
-// BackdropNode presets a sample-input dependency and a dilated effect output.
-class BackdropNode : public CustomNode
-{
-public:
-    BackdropNode();
-
-    void setExpansion(const QMargins &margins);
-    void setExpansion(int px);
-    QMargins expansion() const { return m_expansion; }
-    void setClip(bool clip);
-    bool clip() const { return m_clipExpansion; }
-
-    static EffectDamage defaultDamageProcessor(const CustomNode *node,
-                                               const QRegion &collectedDamage,
-                                               const RenderContext &ctx);
-
-private:
-    friend class Node;
-    QMargins m_expansion;
-    bool m_clipExpansion = true;
-};
 
 
 } // namespace Gdt

@@ -4,14 +4,63 @@
 #include <QMargins>
 #include <QRect>
 #include <QRectF>
-#include <QRegion>
 #include <QTransform>
-#include <QtMath>
-
 #include <QtCore/qglobal.h>
+
+#include <pixman.h>
+
 #include <cmath>
 
 namespace Gdt {
+
+class Region
+{
+public:
+    Region();
+    Region(int x, int y, int width, int height);
+    explicit Region(const QRect &rect);
+    explicit Region(const pixman_region32_t *region);
+    Region(const Region &other);
+    Region(Region &&other) noexcept;
+    ~Region();
+
+    Region &operator=(const Region &other);
+    Region &operator=(Region &&other) noexcept;
+
+    const pixman_region32_t *native() const { return &m_region; }
+    pixman_region32_t *native() { return &m_region; }
+
+    bool isEmpty() const;
+    int rectCount() const;
+    QRect boundingRect() const;
+    const pixman_box32_t *rectangles(int *count) const;
+
+    void clear();
+    void translate(int dx, int dy);
+    Region translated(int dx, int dy) const;
+    void setIntersection(const pixman_region32_t *source, const QRect &rect);
+    void setIntersection(const pixman_region32_t *lhs, const pixman_region32_t *rhs);
+
+    Region &operator+=(const Region &other);
+    Region &operator+=(const QRect &rect);
+    Region &operator-=(const Region &other);
+    Region &operator-=(const QRect &rect);
+    Region &operator&=(const Region &other);
+    Region &operator&=(const QRect &rect);
+
+    bool operator==(const Region &other) const;
+    bool operator!=(const Region &other) const { return !(*this == other); }
+
+private:
+    pixman_region32_t m_region;
+};
+
+Region operator+(Region lhs, const Region &rhs);
+Region operator+(Region lhs, const QRect &rhs);
+Region operator-(Region lhs, const Region &rhs);
+Region operator-(Region lhs, const QRect &rhs);
+Region operator&(Region lhs, const Region &rhs);
+Region operator&(Region lhs, const QRect &rhs);
 
 // Pixel coverage of a continuous rect: over-estimate (damage) and under-estimate (opaque).
 inline QRect outerAligned(const QRectF &r)
@@ -40,7 +89,7 @@ inline QRect innerAligned(const QRectF &r)
     return QRect(x1, y1, x2 - x1, y2 - y1);
 }
 
-// Axis-aligned = translation / scale / 90°-multiple rotation. No shear or arbitrary rotation.
+// Axis-aligned = translation / scale / 90-degree rotation. No shear/arbitrary rotation.
 inline bool isAxisAligned(const QTransform &t)
 {
     if (Q_UNLIKELY(!t.isAffine()))
@@ -70,80 +119,10 @@ inline QRect mapInner(const QTransform &t, const QRectF &local)
     return innerAligned(t.mapRect(local));
 }
 
-// Damage mapping: never smaller than the true covered pixels.
-inline QRegion mapRegionOuter(const QTransform &t, const QRegion &local)
-{
-    if (Q_UNLIKELY(local.isEmpty()))
-        return {};
-    if (Q_LIKELY(t.isIdentity()))
-        return local;
-    if (Q_LIKELY(t.type() <= QTransform::TxTranslate)) {
-        const qreal dx = t.dx();
-        const qreal dy = t.dy();
-        if (std::floor(dx) == dx && std::floor(dy) == dy)
-            return local.translated(int(dx), int(dy));
-    }
-    if (Q_UNLIKELY(!isAxisAligned(t)))
-        return QRegion(mapOuter(t, QRectF(local.boundingRect())));
-    if (Q_LIKELY(local.rectCount() == 1))
-        return QRegion(mapOuter(t, QRectF(local.boundingRect())));
-    QRegion out;
-    for (const QRect &r : local)
-        out += mapOuter(t, QRectF(r));
-    return out;
-}
-
-// Opaque mapping: never larger than the true fully-opaque pixels.
-// Non-axis-aligned transforms contribute nothing (cannot prove coverage cheaply).
-inline QRegion mapRegionInner(const QTransform &t, const QRegion &local)
-{
-    if (Q_UNLIKELY(local.isEmpty()))
-        return {};
-    if (Q_UNLIKELY(!isAxisAligned(t)))
-        return {};
-    if (Q_LIKELY(t.isIdentity()))
-        return local;
-    if (Q_LIKELY(t.type() <= QTransform::TxTranslate)) {
-        const qreal dx = t.dx();
-        const qreal dy = t.dy();
-        if (std::floor(dx) == dx && std::floor(dy) == dy)
-            return local.translated(int(dx), int(dy));
-    }
-    if (Q_LIKELY(local.rectCount() == 1)) {
-        const QRect ir = innerAligned(t.mapRect(QRectF(local.boundingRect())));
-        return ir.isEmpty() ? QRegion() : QRegion(ir);
-    }
-    QRegion out;
-    for (const QRect &r : local) {
-        const QRect ir = innerAligned(t.mapRect(QRectF(r)));
-        if (!ir.isEmpty())
-            out += ir;
-    }
-    return out;
-}
-
-inline QRegion dilateRegion(const QRegion &r, const QMargins &m)
-{
-    if (Q_UNLIKELY(r.isEmpty()))
-        return {};
-    if (Q_LIKELY(m.isNull()))
-        return r;
-    if (Q_LIKELY(r.rectCount() == 1))
-        return QRegion(r.boundingRect().marginsAdded(m));
-    QRegion out;
-    for (const QRect &rect : r)
-        out += rect.marginsAdded(m);
-    return out;
-}
-
-inline bool regionContainsRect(const QRegion &region, const QRect &rect)
-{
-    if (Q_UNLIKELY(rect.isEmpty()))
-        return true;
-    if (Q_UNLIKELY(region.isEmpty()))
-        return false;
-    return (QRegion(rect) - region).isEmpty();
-}
+Region mapRegionOuter(const QTransform &transform, const Region &local);
+Region mapRegionInner(const QTransform &transform, const Region &local);
+Region dilateRegion(const Region &region, const QMargins &margins);
+bool regionContainsRect(const Region &region, const QRect &rect);
 
 } // namespace Gdt
 

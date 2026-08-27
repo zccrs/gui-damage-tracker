@@ -9,8 +9,7 @@ namespace Gdt {
 // Test-only accessor for private Node internals.
 class NodeTestAccess {
 public:
-    static QRegion ownDamage(const Node *n) { return n->m_ownDamage; }
-    static QRegion inducedDamage(const Node *n) { return n->m_inducedDamage; }
+    static const pixman_region32_t *ownDamage(const Node *n) { return n->m_ownDamage.native(); }
 };
 } // namespace Gdt
 

@@ -1480,11 +1480,6 @@ ApplicationWindow {
                                 value: win.num(win.sel.expansion); editable: true
                                 onValueModified: scene.setExpansionSelected(value)
                             }
-                            Label { text: "裁剪扩张"; color: win.mutedColor }
-                            Switch {
-                                checked: win.sel.clipExpansion !== false
-                                onToggled: scene.setClipExpansionSelected(checked)
-                            }
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: win.borderColor }
@@ -1509,36 +1504,6 @@ ApplicationWindow {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap
                                 text: win.sel.worldFrontOpaque || "—"
-                                color: win.textColor
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { text: "Effect 输入损伤"; color: win.mutedColor }
-                            Label {
-                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                wrapMode: Text.Wrap
-                                text: win.sel.effectInputDamage || "—"
-                                color: win.textColor
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { text: "Effect 输出边界"; color: win.mutedColor }
-                            Label {
-                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                wrapMode: Text.Wrap
-                                text: win.sel.effectOutputBounds || "—"
-                                color: win.textColor
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { text: "Effect 输出可见"; color: win.mutedColor }
-                            Label {
-                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                wrapMode: Text.Wrap
-                                text: win.sel.effectOutputVisible || "—"
                                 color: win.textColor
                             }
                         }
@@ -1577,16 +1542,6 @@ ApplicationWindow {
                                 Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
                                 wrapMode: Text.Wrap
                                 text: win.sel.ownDamage || "—"
-                                color: win.textColor
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { text: "Effect 输出损伤"; color: win.mutedColor }
-                            Label {
-                                Layout.fillWidth: true; horizontalAlignment: Text.AlignRight
-                                wrapMode: Text.Wrap
-                                text: win.sel.inducedDamage || "—"
                                 color: win.textColor
                             }
                         }

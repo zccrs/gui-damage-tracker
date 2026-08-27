@@ -32,7 +32,7 @@ static std::vector<BenchmarkResult> s_results;
 
 static Node *buildRealisticTree(int totalNodes, std::vector<GeometryNode *> *outGeos = nullptr,
                                 std::vector<TransformNode *> *outTransforms = nullptr,
-                                std::vector<BackdropNode *> *outBackdrops = nullptr)
+                                void * = nullptr)
 {
     auto *root = new Node(Node::Type::Basic);
     root->setName(QStringLiteral("root"));
@@ -51,16 +51,6 @@ static Node *buildRealisticTree(int totalNodes, std::vector<GeometryNode *> *out
 
         const int childrenInLayer = std::min(15, totalNodes - created);
         for (int i = 0; i < childrenInLayer; ++i) {
-            if (i == 3 && outBackdrops && created + 1 < totalNodes) {
-                auto *bg = new BackdropNode();
-                bg->setName(QStringLiteral("backdrop_%1").arg(created));
-                bg->setBoundingRect(QRectF(10 * i, 10 * i, 200, 150));
-                bg->setExpansion(16);
-                layer->appendChild(bg);
-                outBackdrops->push_back(bg);
-                created++;
-                continue;
-            }
 
             auto *geo = new GeometryNode();
             geo->setName(QStringLiteral("item_%1").arg(created));
@@ -107,27 +97,25 @@ static int getIterations(int nodes)
 
 static BenchmarkResult runBenchmark(const QString &category, const QString &scenario,
                                     int nodeCount, int viewportCount, int iterations,
-                                    const std::function<void(Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int)> &prepareIteration)
+                                    const std::function<void(Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &, int)> &prepareIteration)
 {
     std::vector<GeometryNode *> geos;
     std::vector<TransformNode *> transforms;
-    std::vector<BackdropNode *> backdrops;
-
-    std::unique_ptr<Node> root(buildRealisticTree(nodeCount, &geos, &transforms, &backdrops));
+    std::unique_ptr<Node> root(buildRealisticTree(nodeCount, &geos, &transforms));
     Tracker tracker(root.get());
 
     auto viewports = createViewports(viewportCount);
     // warm-up & initial commit
     for (auto &vp : viewports) vp.finishFrame();
-    tracker.prepareFrame(); for (auto &vp : viewports) tracker.commit(vp); tracker.finishFrame();
+    tracker.prepareFrame(); tracker.commit(viewports); tracker.finishFrame();
 
     QElapsedTimer timer;
     timer.start();
 
     for (int i = 0; i < iterations; ++i) {
-        prepareIteration(tracker, root.get(), geos, transforms, backdrops, i);
+        prepareIteration(tracker, root.get(), geos, transforms, i);
         for (auto &vp : viewports) vp.finishFrame();
-    tracker.prepareFrame(); for (auto &vp : viewports) tracker.commit(vp); tracker.finishFrame();
+        tracker.prepareFrame(); tracker.commit(viewports); tracker.finishFrame();
     }
 
     const qint64 elapsedNs = timer.nsecsElapsed();
@@ -160,7 +148,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("空闲帧 (无脏位快速路径)"),
                 QStringLiteral("Idle commit (0 changes)"),
                 nodes, vps, getIterations(nodes) * 2,
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &, int) {
                     // no-op
                 }
             ));
@@ -174,7 +162,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("局部内容损伤 (16x16 px)"),
                 QStringLiteral("Single leaf node markContentDirty"),
                 nodes, vps, getIterations(nodes),
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int iter) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, int iter) {
                     if (!geos.empty()) {
                         auto *target = geos[iter % geos.size()];
                         target->markContentDirty(QRect(10, 10, 16, 16));
@@ -191,7 +179,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("单节点几何移动 (平移)"),
                 QStringLiteral("Single node setBoundingRect translate"),
                 nodes, vps, getIterations(nodes),
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int iter) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, int iter) {
                     if (!geos.empty()) {
                         auto *target = geos[iter % geos.size()];
                         target->setBoundingRect(QRectF(15.0 + (iter % 50), 10.0 + (iter % 30), 120.0, 80.0));
@@ -208,7 +196,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("子树层级旋转 (TransformNode)"),
                 QStringLiteral("Subtree rotation matrix change"),
                 nodes, vps, getIterations(nodes),
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &transforms, const std::vector<BackdropNode *> &, int iter) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &, const std::vector<TransformNode *> &transforms, int iter) {
                     if (!transforms.empty()) {
                         auto *target = transforms[iter % transforms.size()];
                         QTransform matrix;
@@ -228,7 +216,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("背景采样扩散 (Backdrop 16px)"),
                 QStringLiteral("Backdrop induced damage dilation"),
                 nodes, vps, getIterations(nodes),
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int iter) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, int iter) {
                     if (!geos.empty()) {
                         geos[0]->markContentDirty(QRect(10, 10, 40, 40));
                     }
@@ -244,7 +232,7 @@ void bench_Gdt::benchmarkSuite()
                 QStringLiteral("高密度多节点损坏 (10% 节点)"),
                 QStringLiteral("10% nodes concurrently dirty"),
                 nodes, vps, getIterations(nodes),
-                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, const std::vector<BackdropNode *> &, int iter) {
+                [](Tracker &, Node *, const std::vector<GeometryNode *> &geos, const std::vector<TransformNode *> &, int iter) {
                     const size_t dirtyCount = std::max<size_t>(1, geos.size() / 10);
                     for (size_t k = 0; k < dirtyCount; ++k) {
                         const size_t idx = (iter + k * 7) % geos.size();

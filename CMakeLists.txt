@@ -7,15 +7,18 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Pixman REQUIRED IMPORTED_TARGET pixman-1)
 
 add_library(gdt STATIC
+    src/gdtregion.cpp
     src/gdtnode.cpp
     src/gdttracker.cpp
 )
 target_include_directories(gdt PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
-target_link_libraries(gdt PUBLIC Qt6::Core Qt6::Gui)
+target_link_libraries(gdt PUBLIC Qt6::Core Qt6::Gui PkgConfig::Pixman)
 target_compile_options(gdt PRIVATE -Wall -Wextra -Wpedantic)
 
 option(GDT_BUILD_TESTS "Build unit tests" ON)
